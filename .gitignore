@@ -1,0 +1,187 @@
+# ================================
+# 🔒 SEGURIDAD Y SENSIBLES
+# ================================
+
+# Variables de entorno (¡NUNCA subir!)
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+
+# Tokens y credenciales
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets/
+credentials/
+tokens/
+
+# ================================
+# 🐍 PYTHON
+# ================================
+
+# Entornos virtuales
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+virtualenv/
+pyvenv.cfg
+
+# Archivos de caché de Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+
+# Archivos de distribución/empaquetado
+*.egg-info/
+*.egg
+dist/
+build/
+develop-eggs/
+downloads/
+eggs/
+parts/
+sdist/
+var/
+wheels/
+*.whl
+
+# Herramientas de testing/coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+
+# MyPy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre
+.pyre/
+
+# PyCharm
+.idea/
+*.iml
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# ================================
+# 🗄️ BASE DE DATOS
+# ================================
+
+# SQLite (¡NUNCA subir!)
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+oportunidad.db
+oportunidad.db-journal
+
+# ================================
+# 📁 LOGS Y TEMPORALES
+# ================================
+
+logs/
+*.log
+*.tmp
+*.temp
+temp/
+tmp/
+
+# ================================
+# 📦 DEPENDENCIAS
+# ================================
+
+# Archivos de dependencias generados
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ================================
+# 🚀 DESPLIEGUE
+# ================================
+
+# Railway
+railway-deployment-*.json
+.railway/
+
+# Docker
+*.dockerignore
+.dockerignore
+
+# ================================
+# 📝 DOCUMENTACIÓN GENERADA
+# ================================
+
+# Sphinx
+docs/_build/
+
+# MkDocs
+site/
+
+# ================================
+# 🛠️ HERRAMIENTAS DE DESARROLLO
+# ================================
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+*.ipynb
+
+# Archivos de editor
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ================================
+# 📦 ARCHIVOS COMPRIMIDOS
+# ================================
+
+*.zip
+*.tar.gz
+*.rar
+*.7z
+*.bz2
+
+# ================================
+# 🔧 CONFIGURACIÓN LOCAL
+# ================================
+
+# Archivos de configuración local que no deben compartirse
+config.local.py
+settings.local.py
+local_settings.py
+
+# ================================
+# 🧪 ARCHIVOS DE PRUEBA
+# ================================
+
+# Archivos generados por pruebas
+test-output/
+test-results/
+*.test.log
+
+# ================================
+# 📊 DATOS DE USUARIOS
+# ================================
+
+# Datos de usuarios (si generas archivos)
+user_data/
+user_db/
+*.userdata
