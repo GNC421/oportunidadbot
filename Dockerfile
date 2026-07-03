@@ -1,23 +1,21 @@
-# Usa imagen oficial de Python 3.11
-FROM python:3.11-slim
+FROM python:3.12-slim
 
-# Establecer directorio de trabajo
 WORKDIR /app
 
-# Instalar dependencias del sistema (opcional, para psycopg2 si se usara)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Instalar dependencias del sistema
+RUN apt-get update && apt-get install -y \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
-# Copiar archivos de requerimientos primero (para cachear capas)
+# Copiar y instalar dependencias Python
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copiar el resto del código
+# Copiar código fuente
 COPY . .
 
-# Exponer puerto (el que use Railway o el definido en PORT)
-EXPOSE $PORT
+# Exponer puerto
+EXPOSE 8000
 
-# Comando de inicio con uvicorn
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Railway usará el startCommand de railway.json
+# No es necesario CMD aquí

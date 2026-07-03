@@ -1,6 +1,7 @@
 from pydantic_settings import BaseSettings
 from pydantic import Field
 from typing import Optional
+import os
 
 class Settings(BaseSettings):
     """Configuración de la aplicación cargada desde variables de entorno."""
@@ -12,8 +13,8 @@ class Settings(BaseSettings):
     WEBHOOK_URL: Optional[str] = Field(None, description="URL pública del webhook (ej: https://tu-dominio.railway.app/webhook)")
     WEBHOOK_SECRET: Optional[str] = Field(None, description="Secreto para validar el webhook (opcional)")
     
-    # Servidor
-    PORT: int = Field(8000, description="Puerto donde corre FastAPI")
+    # Servidor - Railway provee PORT automáticamente
+    PORT: int = Field(int(os.getenv("PORT", 8000)), description="Puerto donde corre FastAPI")
     HOST: str = Field("0.0.0.0", description="Host de escucha")
     
     # Base de datos (SQLite)
