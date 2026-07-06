@@ -9,7 +9,7 @@ import os
 
 from .config import settings
 from .bot import create_application
-from .database import engine, Base
+from .database import init_db
 
 # Variable global para mantener la aplicación del bot
 bot_app: Application = None
@@ -26,10 +26,10 @@ async def lifespan(app: FastAPI):
     # 1. Crear la aplicación del bot
     bot_app = create_application()
 
-    # 2. Inicializar base de datos (crear tablas si no existen)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    logger.info("📦 Base de datos SQLite lista")
+    # 2. Verificar conexión con Supabase
+    if not init_db():
+        raise RuntimeError("No se pudo conectar a Supabase")
+    logger.info("📦 Conexión a Supabase lista")
 
     # 3. Configurar modo de operación (webhook o polling)
     if settings.USE_WEBHOOK:
