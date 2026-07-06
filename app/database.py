@@ -87,6 +87,17 @@ def get_user_feeds(user_id: int) -> List[Dict]:
         logger.error(f"Error al obtener feeds: {e}")
         return []
 
+
+def get_active_feeds() -> List[Dict]:
+    """Obtiene todos los feeds activos de la base de datos."""
+    try:
+        result = supabase.table('feeds').select('*').eq('is_active', True).execute()
+        return result.data
+    except Exception as e:
+        logger.error(f"Error al obtener feeds activos: {e}")
+        return []
+
+
 def update_feed_last_check(feed_id: int):
     """Actualiza la última revisión de un feed"""
     try:
