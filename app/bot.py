@@ -1,4 +1,5 @@
 import logging
+from typing import Optional
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 from .config import settings
@@ -7,35 +8,47 @@ from loguru import logger
 # Configurar loguru para que también capture logs de telegram
 logger.add("logs/bot.log", rotation="500 MB", level=settings.LOG_LEVEL)
 
-# Función para crear la aplicación del bot
-def create_application() -> Application:
-    """
-    Crea y configura la instancia de Application de python-telegram-bot.
-    Incluye handlers para /start, /help y manejo de errores.
-    """
-    # Inicializar la aplicación (sin actualizadores ni persistencia por ahora)
-    application = (
-        Application.builder()
-        .token(settings.BOT_TOKEN)
-        .build()
-    )
+_application: Optional[Application] = None
+application: Optional[Application] = None
+
+
+def _build_application() -> Application:
+    """Construye la instancia de Application con handlers configurados."""
+    app = Application.builder().token(settings.BOT_TOKEN).build()
 
     # --- Handlers de comandos ---
-    application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("help", help_command))
 
     # --- Handler para mensajes de texto no comandos (opcional) ---
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo_message))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo_message))
 
     # --- Manejo global de errores ---
-    application.add_error_handler(error_handler)
+    app.add_error_handler(error_handler)
 
-    # Inicializar JobQueue (scheduler) si no está ya inicializado
-    # En v20, el JobQueue se inicia automáticamente al llamar a application.start()
-    # pero podemos configurarlo manualmente si queremos.
-    # Por ahora lo dejamos como está.
+    return app
 
-    return application
+
+# Función para crear o recuperar la única instancia del bot
+def create_application() -> Application:
+    """
+    Crea y devuelve la instancia única de Application del bot.
+    Si ya existe, la reutiliza para evitar duplicados.
+    """
+    global _application, application
+    if _application is None:
+        _application = _build_application()
+        application = _application
+    return _application
+
+
+def get_application() -> Application:
+    """Devuelve la instancia singleton del bot."""
+    return create_application()
+
+
+# Crear la instancia al importar el módulo para que sea accesible globalmente.
+application = create_application()
 
 
 # --- Comandos ---
