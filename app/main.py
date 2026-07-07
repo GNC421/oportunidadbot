@@ -9,7 +9,8 @@ import os
 
 from .config import settings
 from .bot import create_application
-from .database import engine, Base
+from .database import init_db
+from .jobs.scheduler import start_scheduler, stop_scheduler
 
 # Variable global para mantener la aplicación del bot
 bot_app: Application = None
@@ -26,10 +27,10 @@ async def lifespan(app: FastAPI):
     # 1. Crear la aplicación del bot
     bot_app = create_application()
 
-    # 2. Inicializar base de datos (crear tablas si no existen)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    logger.info("📦 Base de datos SQLite lista")
+    # 2. Verificar conexión con Supabase
+    if not init_db():
+        raise RuntimeError("No se pudo conectar a Supabase")
+    logger.info("📦 Conexión a Supabase lista")
 
     # 3. Configurar modo de operación (webhook o polling)
     if settings.USE_WEBHOOK:
@@ -62,6 +63,9 @@ async def lifespan(app: FastAPI):
     #     logger.info("Tarea programada ejecutada")
     # bot_app.job_queue.run_repeating(ejemplo_job, interval=60, first=10)
 
+    # 4. Iniciar scheduler si está disponible
+    start_scheduler()
+
     logger.info("✅ Bot listo y funcionando")
     yield  # Aquí se ejecuta la aplicación FastAPI
 
@@ -72,6 +76,8 @@ async def lifespan(app: FastAPI):
             await bot_app.bot.delete_webhook()
         await bot_app.stop()
         await bot_app.shutdown()
+
+    stop_scheduler()
     logger.info("👋 Bot detenido correctamente")
 
 # Crear la aplicación FastAPI con el lifespan
