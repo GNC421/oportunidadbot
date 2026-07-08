@@ -61,36 +61,101 @@ def get_user(user_id: int) -> Optional[Dict]:
 
 # ============ CRUD Feeds ============
 
-def add_feed(user_id: int, url: str) -> int:
-    """Añade un nuevo feed para un usuario"""
+def add_feed(user_id: int, url: str) -> Optional[int]:
+    """Añade un nuevo feed para un usuario."""
     try:
         result = supabase.table('feeds').insert({
             'user_id': user_id,
             'url': url,
-            'is_active': True
+            'is_active': True,
+            'created_at': datetime.now().isoformat(),
+            'updated_at': datetime.now().isoformat(),
         }).execute()
-        feed_id = result.data[0]['id']
+        feed_id = result.data[0]['id'] if result.data else None
         logger.info(f"📡 Feed añadido: ID {feed_id} para usuario {user_id}")
         return feed_id
     except Exception as e:
         logger.error(f"Error al añadir feed: {e}")
-        raise
+        return None
 
-def get_user_feeds(user_id: int) -> List[Dict]:
-    """Obtiene todos los feeds activos de un usuario"""
+
+def get_user_feeds(user_id: int) -> List[Dict[str, Any]]:
+    """Obtiene todos los feeds de un usuario."""
     try:
-        result = supabase.table('feeds').select('*').eq('user_id', user_id).eq('is_active', True).execute()
-        return result.data
+        result = supabase.table('feeds').select('*').eq('user_id', user_id).execute()
+        return result.data if result.data is not None else []
     except Exception as e:
-        logger.error(f"Error al obtener feeds: {e}")
+        logger.error(f"Error al obtener feeds del usuario {user_id}: {e}")
         return []
 
 
-def get_active_feeds() -> List[Dict]:
+def delete_feed(user_id: int, feed_id: int) -> bool:
+    """Elimina un feed de un usuario."""
+    try:
+        result = supabase.table('feeds').delete().eq('id', feed_id).eq('user_id', user_id).execute()
+        success = bool(getattr(result, 'data', None) is not None)
+        logger.info(f"🗑️ Feed eliminado: ID {feed_id} para usuario {user_id}")
+        return success
+    except Exception as e:
+        logger.error(f"Error al eliminar feed {feed_id}: {e}")
+        return False
+
+
+def enable_feed(user_id: int, feed_id: int) -> bool:
+    """Activa un feed de un usuario."""
+    try:
+        result = supabase.table('feeds').update({
+            'is_active': True,
+            'updated_at': datetime.now().isoformat(),
+        }).eq('id', feed_id).eq('user_id', user_id).execute()
+        success = bool(getattr(result, 'data', None) is not None)
+        logger.info(f"▶️ Feed activado: ID {feed_id} para usuario {user_id}")
+        return success
+    except Exception as e:
+        logger.error(f"Error al activar feed {feed_id}: {e}")
+        return False
+
+
+def disable_feed(user_id: int, feed_id: int) -> bool:
+    """Desactiva un feed de un usuario."""
+    try:
+        result = supabase.table('feeds').update({
+            'is_active': False,
+            'updated_at': datetime.now().isoformat(),
+        }).eq('id', feed_id).eq('user_id', user_id).execute()
+        success = bool(getattr(result, 'data', None) is not None)
+        logger.info(f"⏸️ Feed desactivado: ID {feed_id} para usuario {user_id}")
+        return success
+    except Exception as e:
+        logger.error(f"Error al desactivar feed {feed_id}: {e}")
+        return False
+
+
+def feed_exists(user_id: int, url: str) -> bool:
+    """Comprueba si un usuario ya tiene un feed con la misma URL."""
+    try:
+        result = supabase.table('feeds').select('id').eq('user_id', user_id).eq('url', url).execute()
+        return bool(result.data)
+    except Exception as e:
+        logger.error(f"Error al comprobar existencia del feed {url}: {e}")
+        return False
+
+
+def user_feed_count(user_id: int) -> int:
+    """Cuenta los feeds de un usuario."""
+    try:
+        result = supabase.table('feeds').select('id', count='exact').eq('user_id', user_id).execute()
+        return int(getattr(result, 'count', 0) or 0)
+    except Exception as e:
+        logger.error(f"Error al contar feeds del usuario {user_id}: {e}")
+        return 0
+
+
+def get_active_feeds() -> List[Dict[str, Any]]:
     """Obtiene todos los feeds activos de la base de datos."""
     try:
         result = supabase.table('feeds').select('*').eq('is_active', True).execute()
-        return result.data
+        return result.data if result.data is not None else []
     except Exception as e:
         logger.error(f"Error al obtener feeds activos: {e}")
         return []
