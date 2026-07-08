@@ -1,53 +1,35 @@
 # ============================================
-# OPORTUNIDADBOT - REQUIREMENTS.TXT
-# Versión: Día 4 - Integración y Orquestación
-# Fecha: 2026-07-06
+# OPORTUNIDADBOT
 # ============================================
 
-# ====== 1. FRAMEWORK PRINCIPAL ======
+# Framework
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
+
+# Configuración
 pydantic==2.5.0
 pydantic-settings==2.1.0
+python-dotenv==1.0.0
 
-# ====== 2. BOT DE TELEGRAM ======
-python-telegram-bot==20.6
+# Telegram
 python-telegram-bot[job-queue]==20.6
 
-# ====== 3. BASE DE DATOS (SUPABASE) ======
-supabase==2.3.0
-postgrest==0.13.0
-realtime==0.0.2
+# Base de datos
+supabase==2.5.1
 
-# ====== 4. RSS Y SCRAPING ======
+# RSS
 feedparser==6.0.10
 beautifulsoup4==4.12.2
-requests==2.31.0
 lxml==4.9.3
-tenacity==8.2.3
 
-# ====== 5. IA Y PROCESAMIENTO ======
-openai==1.6.1
-tiktoken==0.5.1
-
-# ====== 6. TAREAS PROGRAMADAS ======
+# Scheduler
 APScheduler==3.10.4
 
-# ====== 7. LOGGING Y UTILIDADES ======
+# Reintentos
+tenacity==8.2.3
+
+# IA (Fase 3.3)
+openai==1.6.1
+
+# Logging
 loguru==0.7.2
-python-dotenv==1.0.0
-httpx==0.25.1
-email-validator==2.1.0
-python-multipart==0.0.6
-
-# ====== 8. CACHE (OPCIONAL) ======
-redis==5.0.1
-hiredis==2.3.2
-
-# ====== 9. TESTING Y DESARROLLO ======
-pytest==7.4.3
-pytest-asyncio==0.23.2
-pytest-cov==4.1.0
-black==23.11.0
-isort==5.12.0
-mypy==1.7.0
