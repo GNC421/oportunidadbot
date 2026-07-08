@@ -1,6 +1,6 @@
 from typing import Optional
 
-from telegram import Application
+from telegram.ext import Application
 from loguru import logger
 
 from ..config import settings

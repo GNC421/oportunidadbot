@@ -1,17 +1,15 @@
-import os
 from supabase import create_client, Client
 from loguru import logger
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+from .config import settings
 
-if not SUPABASE_URL or not SUPABASE_KEY:
+if not settings.SUPABASE_URL or not settings.SUPABASE_KEY:
     logger.error("❌ Supabase URL o KEY no configuradas")
     raise ValueError("Supabase credentials are required")
 
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+supabase: Client = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
 
 def init_db():
     """Verifica la conexión a la base de datos"""
