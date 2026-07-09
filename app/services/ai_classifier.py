@@ -3,6 +3,8 @@ import time
 from collections import OrderedDict
 from typing import Optional
 
+from app.services.prompts import REAL_ESTATE_CLASSIFIER_PROMPT
+
 import httpx
 from loguru import logger
 
@@ -53,8 +55,7 @@ class AIClassifier:
                 self._log_metrics(start_time, cached_result)
                 return cached_result
 
-            prompt = self._build_prompt(title, summary)
-            response = await self._call_nvidia(prompt)
+            response = await self._call_nvidia(title, summary)
             result = self._parse_response(response)
             self._set_cached_result(cache_key, result)
             self._log_metrics(start_time, result)
@@ -101,14 +102,6 @@ class AIClassifier:
         if len(self._cache) > self._cache_limit:
             self._cache.popitem(last=False)
 
-    def _build_prompt(self, title: str, summary: str) -> str:
-        """Construye el prompt para la API de NVIDIA."""
-        return (
-            "Clasifica si el siguiente texto describe una oportunidad de negocio relevante. "
-            "Responde únicamente con 'true' o 'false'.\n\n"
-            f"Título: {title}\n\nResumen: {summary}"
-        )
-
     async def _get_client(self) -> httpx.AsyncClient:
         """Reutiliza un cliente HTTP asíncrono para todas las peticiones."""
         if self._client is None or self._client.is_closed:
@@ -120,7 +113,7 @@ class AIClassifier:
         if self._client is not None and not self._client.is_closed:
             await self._client.aclose()
 
-    async def _call_nvidia(self, prompt: str) -> Optional[str]:
+    async def _call_nvidia(self, title: str, summary: str) -> Optional[str]:
         """Realiza la llamada a la API de NVIDIA y devuelve el texto generado."""
         if not self._api_key:
             logger.warning("No hay API key de NVIDIA configurada; se omite la llamada")
@@ -130,8 +123,14 @@ class AIClassifier:
         payload = {
             "model": self._model,
             "messages": [
-                {"role": "system", "content": "Eres un clasificador preciso de oportunidades de negocio."},
-                {"role": "user", "content": prompt},
+                {
+                    "role": "system",
+                    "content": REAL_ESTATE_CLASSIFIER_PROMPT,
+                },
+                {
+                    "role": "user",
+                    "content": f"Título: {title}\n\nContenido: {summary}",
+                },
             ],
             "temperature": 0,
             "max_tokens": 8,
