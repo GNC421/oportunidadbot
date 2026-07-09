@@ -102,7 +102,7 @@ async def addgroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     normalized_url = _normalize_feed_url(raw_url)
     parsed = urlparse(normalized_url)
     if not parsed.scheme or not parsed.netloc:
-        logger.warning("URL de feed inválida recibida: %s", raw_url)
+        logger.warning("URL de feed inválida recibida: {}", raw_url)
         await update.message.reply_text("La URL no tiene un formato válido. Prueba con una dirección completa como https://ejemplo.com/feed")
         return
 
@@ -124,10 +124,12 @@ async def addgroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             )
             return
 
-        parsed_feed = feed_parser.parse_feed(normalized_url)
-        if not parsed_feed:
-            logger.warning("El feed no pudo validarse: %s", normalized_url)
-            await update.message.reply_text("No pude validar ese RSS. Comprueba que la URL sea un feed válido y accesible.")
+        validation = feed_parser.validate_feed_source(normalized_url)
+        if not validation.get("valid", False):
+            logger.warning("El feed no pudo validarse: {normalized_url} - {error}")
+            await update.message.reply_text(
+                "No pude validar ese RSS. " + (validation.get("error") or "Comprueba que la URL sea un feed válido y accesible.")
+            )
             return
 
         feed_id = database.add_feed(user_id=user_id, url=normalized_url)
