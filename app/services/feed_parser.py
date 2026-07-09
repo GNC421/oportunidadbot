@@ -1,37 +1,12 @@
+import asyncio
 import feedparser
-import re
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, List, Dict, Optional
 from urllib.parse import urlparse
 from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-# Palabras clave para detectar preguntas
-QUESTION_PATTERNS = [
-    r'alguien sabe',
-    r'recomend[áa]is',
-    r'recomendaci[óo]n',
-    r'd[óo]nde (comprar|alquilar|comer|contratar|comprar)',
-    r'[¿?]',
-    r'busc[oó]',
-    r'necesito',
-    r'me pode[íi]s',
-    r'me recomend[áa]is',
-    r'qu[eé] (restaurante|tienda|servicio|profesional)',
-    r'tiene alg[uú]n',
-    r'conoc[eé]is',
-    r'sab[eé]is de',
-    r'hay alg[uú]n',
-    r'alg[uú]n (sitio|local|lugar)',
-]
-
-# Palabras clave para filtrado negativo (spam)
-SPAM_PATTERNS = [
-    r'publicidad',
-    r'contrata',
-    r'servicios SEO',
-    r'compra seguidores',
-    r'vendo seguidores',
-]
+from app.services.ai_classifier import classifier
 
 def _parse_feed_source(url: str) -> Optional[Any]:
     """Obtiene el objeto parseado por feedparser para una URL dada."""
@@ -119,24 +94,24 @@ def parse_feed(url: str) -> Optional[List[Dict]]:
         return None
 
 def detect_question(text: str) -> bool:
-    """Detecta si un texto contiene una pregunta relevante"""
+    """Detecta si un texto parece una oportunidad de negocio mediante IA."""
     if not text:
         return False
-    
-    # Limpiar y normalizar
-    text = text.lower().strip()
-    
-    # Filtrar spam
-    for spam in SPAM_PATTERNS:
-        if re.search(spam, text, re.IGNORECASE):
-            return False
-    
-    # Detectar preguntas
-    for pattern in QUESTION_PATTERNS:
-        if re.search(pattern, text, re.IGNORECASE):
-            return True
-    
-    return False
+
+    title, summary = "", text
+    if "\n" in text:
+        parts = [part.strip() for part in text.split("\n", 1) if part.strip()]
+        if parts:
+            title = parts[0]
+            summary = parts[1] if len(parts) > 1 else parts[0]
+
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(lambda: asyncio.run(classifier.is_business_opportunity(title, summary)))
+            return future.result()
+    except Exception as exc:
+        logger.exception(f"Error al clasificar con IA: {exc}")
+        return False
 
 def check_user_feeds(feed: Dict) -> List[Dict]:
     """Revisa un feed y devuelve solo las entradas que parecen preguntas relevantes."""

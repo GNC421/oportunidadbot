@@ -25,7 +25,13 @@ class Settings(BaseSettings):
     SUPABASE_PUBLISHABLE_KEY: Optional[str] = Field(None, description="Clave publishable de Supabase")
     SUPABASE_KEY: Optional[str] = Field(None, description="Clave de servicio de Supabase")
     SUPABASE_JWKS_URL: Optional[str] = Field(None, description="URL de JWKS de Supabase")
-    
+
+    # AI
+    NVIDIA_API_KEY: Optional[str] = Field(None, description="API Key de NVIDIA para clasificación de oportunidades")
+    NVIDIA_BASE_URL: Optional[str] = Field(None, description="URL base de la API de NVIDIA")
+    NVIDIA_MODEL: Optional[str] = Field(None, description="Modelo de lenguaje de NVIDIA")
+    AI_ENABLED: bool = Field(False, description="Habilitar el uso de la IA para clasificación de oportunidades")
+
     # Logging
     LOG_LEVEL: str = Field("INFO", description="Nivel de logging")
     
