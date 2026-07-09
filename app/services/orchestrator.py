@@ -38,7 +38,7 @@ class Orchestrator:
 
         existing = get_alert_by_url(post_url)
         if existing:
-            logger.info("Oportunidad ya registrada previamente: %s", post_url)
+            logger.info(f"Oportunidad ya registrada previamente: {post_url}")
             return
 
         alert_id = save_alert(
@@ -46,7 +46,7 @@ class Orchestrator:
             feed_id=feed_id,
             post_data=payload,
         )
-        logger.info("Alerta guardada (%s)", alert_id)
+        logger.info(f"Alerta guardada ({alert_id})")
 
         await send_alert(user_id=user_id, post_data=payload, feed_id=feed_id)
 
@@ -78,18 +78,18 @@ class Orchestrator:
                 url = feed.get("url")
 
                 if not feed_id or not user_id or not url:
-                    logger.warning("Feed incompleto, se omite: %s", feed)
+                    logger.warning(f"Feed incompleto, se omite: {feed}")
                     continue
 
-                logger.info("Procesando feed %s", url)
+                logger.info(f"Procesando feed {url}")
                 opportunities = check_user_feeds(feed)
 
                 if not opportunities:
-                    logger.info("No hay novedades para %s", url)
+                    logger.info(f"No hay novedades para {url}")
                     update_feed_last_check(feed_id)
                     continue
 
-                logger.info("Encontradas %s oportunidades nuevas", len(opportunities))
+                logger.info(f"Encontradas {len(opportunities)} oportunidades nuevas")
 
                 for opportunity in opportunities:
                     try:
@@ -101,9 +101,9 @@ class Orchestrator:
                 update_feed_last_check(feed_id)
 
             except Exception:
-                logger.exception("Error procesando feed %s", feed.get("url"))
+                logger.exception(f"Error procesando feed {feed.get('url')}")
 
-        logger.info("Finalizada comprobación. Alertas enviadas: %s", total_alerts)
+        logger.info(f"Finalizada comprobación. Alertas enviadas: {total_alerts}")
         return total_alerts
 
 

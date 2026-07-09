@@ -69,7 +69,6 @@ def add_feed(user_id: int, url: str) -> Optional[int]:
             'url': url,
             'is_active': True,
             'created_at': datetime.now().isoformat(),
-            'updated_at': datetime.now().isoformat(),
         }).execute()
         feed_id = result.data[0]['id'] if result.data else None
         logger.info(f"📡 Feed añadido: ID {feed_id} para usuario {user_id}")
@@ -106,7 +105,6 @@ def enable_feed(user_id: int, feed_id: int) -> bool:
     try:
         result = supabase.table('feeds').update({
             'is_active': True,
-            'updated_at': datetime.now().isoformat(),
         }).eq('id', feed_id).eq('user_id', user_id).execute()
         success = bool(getattr(result, 'data', None) is not None)
         logger.info(f"▶️ Feed activado: ID {feed_id} para usuario {user_id}")
@@ -121,7 +119,6 @@ def disable_feed(user_id: int, feed_id: int) -> bool:
     try:
         result = supabase.table('feeds').update({
             'is_active': False,
-            'updated_at': datetime.now().isoformat(),
         }).eq('id', feed_id).eq('user_id', user_id).execute()
         success = bool(getattr(result, 'data', None) is not None)
         logger.info(f"⏸️ Feed desactivado: ID {feed_id} para usuario {user_id}")
