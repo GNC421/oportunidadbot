@@ -102,7 +102,7 @@ async def addgroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     normalized_url = _normalize_feed_url(raw_url)
     parsed = urlparse(normalized_url)
     if not parsed.scheme or not parsed.netloc:
-        logger.warning("URL de feed inválida recibida: %s", raw_url)
+        logger.warning("URL de feed inválida recibida: {}", raw_url)
         await update.message.reply_text("La URL no tiene un formato válido. Prueba con una dirección completa como https://ejemplo.com/feed")
         return
 
@@ -124,19 +124,38 @@ async def addgroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             )
             return
 
-        parsed_feed = feed_parser.parse_feed(normalized_url)
-        if not parsed_feed:
-            logger.warning("El feed no pudo validarse: %s", normalized_url)
-            await update.message.reply_text("No pude validar ese RSS. Comprueba que la URL sea un feed válido y accesible.")
+        validation = feed_parser.validate_feed_source(normalized_url)
+        if not validation.get("valid", False):
+            logger.warning("El feed no pudo validarse: {} - {}", normalized_url, validation.get("error"))
+            await update.message.reply_text(
+                "No pude validar ese RSS. " + (validation.get("error") or "Comprueba que la URL sea un feed válido y accesible.")
+            )
             return
 
+        database.add_user(user_id, update.effective_user.username or "")
         feed_id = database.add_feed(user_id=user_id, url=normalized_url)
-        logger.info("Feed añadido por usuario %s: %s", user_id, normalized_url)
+        if not feed_id:
+            logger.error(
+                "No se pudo guardar el feed en Supabase para el usuario {user_id}: {normalized_url}",
+                user_id=user_id,
+                normalized_url=normalized_url,
+            )
+            await update.message.reply_text("No se pudo guardar el feed en este momento. Inténtalo más tarde.")
+            return
+
+        logger.info(
+            "Feed añadido por usuario {user_id}: {normalized_url}",
+            user_id=user_id,
+            normalized_url=normalized_url,
+        )
         await update.message.reply_text(
             f"✅ Feed añadido correctamente.\nID: {feed_id}\nURL: {normalized_url}"
         )
     except Exception as exc:
-        logger.exception("Error al añadir un feed para el usuario %s", user_id)
+        logger.exception(
+            "Error al añadir un feed para el usuario {user_id}",
+            user_id=user_id,
+        )
         await update.message.reply_text("No se pudo guardar el feed en este momento. Inténtalo más tarde.")
 
 
@@ -160,7 +179,10 @@ async def groups_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         await update.message.reply_text("\n".join(lines))
     except Exception as exc:
-        logger.exception("Error al listar feeds del usuario %s", user_id)
+        logger.exception(
+            "Error al listar feeds del usuario {user_id}",
+            user_id=user_id,
+        )
         await update.message.reply_text("No se pudieron cargar tus feeds en este momento.")
 
 
@@ -188,10 +210,18 @@ async def removegroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             return
 
         _delete_user_feed(user_id, feed_id)
-        logger.info("Feed eliminado por usuario %s: %s", user_id, feed_id)
+        logger.info(
+            "Feed eliminado por usuario {user_id}: {feed_id}",
+            user_id=user_id,
+            feed_id=feed_id,
+        )
         await update.message.reply_text("🗑️ Feed eliminado correctamente.")
     except Exception as exc:
-        logger.exception("Error al eliminar el feed %s del usuario %s", feed_id, user_id)
+        logger.exception(
+            "Error al eliminar el feed {feed_id} del usuario {user_id}",
+            feed_id=feed_id,
+            user_id=user_id,
+        )
         await update.message.reply_text("No se pudo eliminar el feed en este momento.")
 
 
@@ -219,10 +249,18 @@ async def pausegroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return
 
         _update_user_feed_status(user_id, feed_id, False)
-        logger.info("Feed pausado por usuario %s: %s", user_id, feed_id)
+        logger.info(
+            "Feed pausado por usuario {user_id}: {feed_id}",
+            user_id=user_id,
+            feed_id=feed_id,
+        )
         await update.message.reply_text("⏸️ Feed pausado correctamente.")
     except Exception as exc:
-        logger.exception("Error al pausar el feed %s del usuario %s", feed_id, user_id)
+        logger.exception(
+            "Error al pausar el feed {feed_id} del usuario {user_id}",
+            feed_id=feed_id,
+            user_id=user_id,
+        )
         await update.message.reply_text("No se pudo pausar el feed en este momento.")
 
 
@@ -250,10 +288,18 @@ async def resumegroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             return
 
         _update_user_feed_status(user_id, feed_id, True)
-        logger.info("Feed reactivado por usuario %s: %s", user_id, feed_id)
+        logger.info(
+            "Feed reactivado por usuario {user_id}: {feed_id}",
+            user_id=user_id,
+            feed_id=feed_id,
+        )
         await update.message.reply_text("▶️ Feed reactivado correctamente.")
     except Exception as exc:
-        logger.exception("Error al reactivar el feed %s del usuario %s", feed_id, user_id)
+        logger.exception(
+            "Error al reactivar el feed {feed_id} del usuario {user_id}",
+            feed_id=feed_id,
+            user_id=user_id,
+        )
         await update.message.reply_text("No se pudo reactivar el feed en este momento.")
 
 
