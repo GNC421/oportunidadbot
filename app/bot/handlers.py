@@ -7,7 +7,7 @@ from loguru import logger
 
 from app import database
 from app.config import settings
-from app.services import feed_parser
+from app.services import feed_parser, rsshub_resolver
 
 MAX_FEEDS_PER_USER = getattr(settings, "MAX_FEEDS_PER_USER", 10)
 
@@ -31,7 +31,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "📋 **Lista de comandos disponibles:**\n\n"
         "/start - Mensaje de bienvenida\n"
         "/help - Mostrar esta ayuda\n"
-        "/addgroup [URL] - Añadir un feed RSS\n"
+        "/addgroup [URL] - Añadir un feed a partir de una URL soportada\n"
         "/groups - Listar tus feeds\n"
         "/removegroup [ID] - Eliminar un feed\n"
         "/pausegroup [ID] - Pausar un feed\n"
@@ -84,14 +84,14 @@ def _find_user_feed(user_id: int, feed_id: int) -> Optional[Dict[str, Any]]:
 
 
 async def addgroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Añade un feed RSS para el usuario actual."""
+    """Añade un feed para el usuario actual a partir de una URL soportada."""
     user_id = _get_user_id(update)
     if not user_id:
         await update.message.reply_text("No pude identificar tu usuario. Inténtalo de nuevo.")
         return
 
     if not context.args:
-        await update.message.reply_text("Uso: /addgroup [URL_del_feed_RSS]")
+        await update.message.reply_text("Uso: /addgroup [URL]")
         return
 
     raw_url = " ".join(context.args).strip()
@@ -106,6 +106,12 @@ async def addgroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await update.message.reply_text("La URL no tiene un formato válido. Prueba con una dirección completa como https://ejemplo.com/feed")
         return
 
+    resolved_feed_url = rsshub_resolver.resolve(normalized_url)
+    if resolved_feed_url is None:
+        logger.warning("No se pudo resolver una URL RSSHub para: {}", normalized_url)
+        await update.message.reply_text("La plataforma aún no está soportada para convertirla a RSS automáticamente.")
+        return
+
     try:
         existing_feeds = _fetch_user_feeds(user_id)
         existing_urls = {
@@ -114,7 +120,7 @@ async def addgroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             if feed.get("url")
         }
 
-        if normalized_url in existing_urls:
+        if resolved_feed_url in existing_urls:
             await update.message.reply_text("Este feed ya está registrado en tus grupos.")
             return
 
@@ -124,21 +130,21 @@ async def addgroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             )
             return
 
-        validation = feed_parser.validate_feed_source(normalized_url)
+        validation = feed_parser.validate_feed_source(resolved_feed_url)
         if not validation.get("valid", False):
-            logger.warning("El feed no pudo validarse: {} - {}", normalized_url, validation.get("error"))
+            logger.warning("El feed no pudo validarse: {} - {}", resolved_feed_url, validation.get("error"))
             await update.message.reply_text(
                 "No pude validar ese RSS. " + (validation.get("error") or "Comprueba que la URL sea un feed válido y accesible.")
             )
             return
 
         database.add_user(user_id, update.effective_user.username or "")
-        feed_id = database.add_feed(user_id=user_id, url=normalized_url)
+        feed_id = database.add_feed(user_id=user_id, url=resolved_feed_url)
         if not feed_id:
             logger.error(
                 "No se pudo guardar el feed en Supabase para el usuario {user_id}: {normalized_url}",
                 user_id=user_id,
-                normalized_url=normalized_url,
+                normalized_url=resolved_feed_url,
             )
             await update.message.reply_text("No se pudo guardar el feed en este momento. Inténtalo más tarde.")
             return
@@ -146,10 +152,10 @@ async def addgroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         logger.info(
             "Feed añadido por usuario {user_id}: {normalized_url}",
             user_id=user_id,
-            normalized_url=normalized_url,
+            normalized_url=resolved_feed_url,
         )
         await update.message.reply_text(
-            f"✅ Feed añadido correctamente.\nID: {feed_id}\nURL: {normalized_url}"
+            f"✅ Feed añadido correctamente.\nID: {feed_id}\nURL: {resolved_feed_url}"
         )
     except Exception as exc:
         logger.exception(
