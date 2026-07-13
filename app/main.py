@@ -23,9 +23,11 @@ async def lifespan(app: FastAPI):
     """
     global bot_app
     logger.info("🚀 Iniciando OportunidadBot...")
+    logger.debug("FastAPI lifespan startup entered")
 
     # 1. Crear la aplicación del bot
     bot_app = create_application()
+    logger.debug("Telegram application created in lifespan")
 
     # 2. Verificar conexión con Supabase
     if not init_db():
@@ -40,6 +42,7 @@ async def lifespan(app: FastAPI):
         # Iniciar la aplicación (necesario para el webhook)
         await bot_app.initialize()
         await bot_app.start()
+        logger.debug("Telegram application initialized in webhook mode")
         # Configurar webhook en Telegram
         webhook_url = f"{settings.WEBHOOK_URL}/webhook"
         await bot_app.bot.set_webhook(
@@ -52,6 +55,7 @@ async def lifespan(app: FastAPI):
         # Iniciar la aplicación y el polling como tarea en segundo plano
         await bot_app.initialize()
         await bot_app.start()
+        logger.debug("Telegram application initialized in polling mode")
         # Iniciar polling en una tarea asíncrona para no bloquear el servidor
         asyncio.create_task(bot_app.updater.start_polling())
         logger.info("📡 Polling iniciado en segundo plano")
@@ -65,12 +69,14 @@ async def lifespan(app: FastAPI):
 
     # 4. Iniciar scheduler si está disponible
     start_scheduler()
+    logger.debug("Scheduler start requested from lifespan")
 
     logger.info("✅ Bot listo y funcionando")
     yield  # Aquí se ejecuta la aplicación FastAPI
 
     # Limpieza al apagar
     logger.info("🛑 Apagando OportunidadBot...")
+    logger.debug("FastAPI lifespan shutdown entered")
     if bot_app:
         if settings.USE_WEBHOOK:
             await bot_app.bot.delete_webhook()
@@ -78,6 +84,7 @@ async def lifespan(app: FastAPI):
         await bot_app.shutdown()
 
     stop_scheduler()
+    logger.debug("Scheduler stop requested from lifespan")
     logger.info("👋 Bot detenido correctamente")
 
 # Crear la aplicación FastAPI con el lifespan
@@ -93,6 +100,7 @@ app = FastAPI(
 @app.get("/health")
 async def health_check():
     """Endpoint para healthchecks (Railway, etc.)"""
+    logger.debug("health_check endpoint called")
     return {"status": "healthy"}
 
 @app.post("/webhook")
@@ -102,6 +110,7 @@ async def webhook_endpoint(request: Request) -> JSONResponse:
     Verifica el secret_token y procesa la actualización.
     """
     global bot_app
+    logger.debug("webhook_endpoint called")
 
     # Validar secret_token si está configurado
     if settings.WEBHOOK_SECRET:
@@ -113,10 +122,12 @@ async def webhook_endpoint(request: Request) -> JSONResponse:
     try:
         # Obtener el cuerpo de la solicitud
         data = await request.json()
+        logger.debug("Webhook payload received", keys=list(data.keys()) if isinstance(data, dict) else [])
         # Crear el objeto Update
         update = Update.de_json(data, bot_app.bot)
         # Procesar la actualización
         await bot_app.process_update(update)
+        logger.debug("Webhook update processed successfully")
         return JSONResponse(content={"ok": True})
     except Exception as e:
         logger.error(f"Error procesando webhook: {e}")
@@ -125,6 +136,7 @@ async def webhook_endpoint(request: Request) -> JSONResponse:
 # Opcional: endpoint para pruebas
 @app.get("/ping")
 async def ping():
+    logger.debug("ping endpoint called")
     return {"ping": "pong"}
 
 # Punto de entrada para ejecutar con uvicorn directamente

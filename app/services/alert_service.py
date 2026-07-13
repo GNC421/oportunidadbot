@@ -9,6 +9,7 @@ BOT_USERNAME = os.getenv("BOT_USERNAME", "OportunidadBot")
 
 async def send_welcome_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Envía el mensaje de bienvenida"""
+    logger.debug("send_welcome_message called")
     user = update.effective_user
     
     welcome_text = f"""
@@ -48,6 +49,7 @@ Soy *OportunidadBot*, tu asistente para detectar oportunidades de negocio en tie
 
 async def send_alert(user_id: int, post_data: dict, feed_id: int):
     """Envía una alerta a un usuario específico"""
+    logger.debug("send_alert called", user_id=user_id, feed_id=feed_id, post_url=post_data.get("link"))
     from app.bot import application
     
     # Obtener información del usuario para personalizar

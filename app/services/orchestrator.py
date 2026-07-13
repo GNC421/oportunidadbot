@@ -19,6 +19,7 @@ class Orchestrator:
 
     def _build_alert_payload(self, alert: Dict) -> Dict:
         """Normaliza la salida del parser a un formato compatible con el resto del sistema."""
+        logger.debug("Building alert payload", source_keys=list(alert.keys()))
         return {
             "title": alert.get("title", ""),
             "summary": alert.get("summary", ""),
@@ -29,6 +30,7 @@ class Orchestrator:
 
     async def _handle_alert(self, user_id: int, feed_id: int, alert: Dict) -> None:
         """Procesa una oportunidad detectada en el orden pedido por el flujo."""
+        logger.debug("Handling alert", user_id=user_id, feed_id=feed_id)
         payload = self._build_alert_payload(alert)
         post_url = payload.get("link", "")
 
@@ -49,11 +51,13 @@ class Orchestrator:
         logger.info(f"Alerta guardada ({alert_id})")
 
         await send_alert(user_id=user_id, post_data=payload, feed_id=feed_id)
+        logger.debug("Alert sent request completed", user_id=user_id, feed_id=feed_id)
 
         if alert_id:
             mark_alert_sent(alert_id)
 
     async def run_feed_checks(self) -> int:
+        logger.debug("run_feed_checks started")
         logger.info("=" * 60)
         logger.info("Iniciando comprobación de feeds")
         logger.info("=" * 60)
@@ -68,6 +72,8 @@ class Orchestrator:
         if not feeds:
             logger.info("No hay feeds disponibles para revisar")
             return 0
+
+        logger.info(f"Feeds activos a revisar: {len(feeds)}")
 
         total_alerts = 0
 
@@ -99,6 +105,7 @@ class Orchestrator:
                         logger.exception("Error procesando oportunidad")
 
                 update_feed_last_check(feed_id)
+                logger.debug("last_check updated", feed_id=feed_id)
 
             except Exception:
                 logger.exception(f"Error procesando feed {feed.get('url')}")
@@ -111,4 +118,5 @@ orchestrator = Orchestrator()
 
 
 async def run_feed_checks() -> int:
+    logger.debug("run_feed_checks wrapper called")
     return await orchestrator.run_feed_checks()

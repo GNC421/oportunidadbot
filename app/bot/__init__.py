@@ -14,8 +14,10 @@ application: Optional[Application] = None
 
 def _build_application() -> Application:
     """Construye la instancia de Application con handlers configurados."""
+    logger.debug("Building Telegram Application instance")
     app = Application.builder().token(settings.BOT_TOKEN).build()
     register_handlers(app)
+    logger.info("Telegram Application instance built")
     return app
 
 
@@ -26,13 +28,17 @@ def create_application() -> Application:
     """
     global _application, application
     if _application is None:
+        logger.info("Creating singleton Telegram Application")
         _application = _build_application()
         application = _application
+    else:
+        logger.debug("Reusing existing Telegram Application singleton")
     return _application
 
 
 def get_application() -> Application:
     """Devuelve la instancia singleton del bot."""
+    logger.debug("get_application called")
     return create_application()
 
 
