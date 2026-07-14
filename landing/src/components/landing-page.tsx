@@ -171,20 +171,20 @@ const comparisonRows = [
 const pricingPlans = [
   {
     name: "Starter",
-    price: "29€",
+    price: "??€",
     description: "Para profesionales que quieren validar una fuente crítica.",
     features: ["Hasta 3 fuentes", "Alertas por Telegram", "IA vertical inmobiliaria"],
   },
   {
     name: "Professional",
-    price: "79€",
+    price: "??€",
     description: "Pensado para equipos comerciales que necesitan cobertura diaria.",
     featured: true,
     features: ["Hasta 15 fuentes", "Prioridad en procesamiento", "Panel de oportunidades"],
   },
   {
     name: "Enterprise",
-    price: "199€",
+    price: "??€",
     description: "Para agencias y redes con mayor volumen y necesidades avanzadas.",
     features: ["Fuentes ilimitadas", "Equipos y permisos", "Soporte prioritario y onboarding"],
   },
