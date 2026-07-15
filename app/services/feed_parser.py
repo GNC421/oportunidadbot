@@ -10,6 +10,7 @@ from app.services.ai_classifier import classifier
 
 def _parse_feed_source(url: str) -> Optional[Any]:
     """Obtiene el objeto parseado por feedparser para una URL dada."""
+    logger.debug("_parse_feed_source called", url=url)
     try:
         return feedparser.parse(url)
     except Exception as exc:
@@ -19,6 +20,7 @@ def _parse_feed_source(url: str) -> Optional[Any]:
 
 def validate_feed_source(url: str) -> Dict[str, Any]:
     """Valida si una URL apunta a un feed RSS usable y devuelve un resultado estructurado."""
+    logger.debug("validate_feed_source called", url=url)
     if not url or not str(url).strip():
         logger.warning("Se recibió una URL de feed vacía")
         return {"valid": False, "error": "La URL del feed está vacía", "title": "", "entry_count": 0}
@@ -66,6 +68,7 @@ def validate_feed_source(url: str) -> Dict[str, Any]:
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def parse_feed(url: str) -> Optional[List[Dict]]:
     """Parsea un feed RSS y devuelve las entradas."""
+    logger.debug("parse_feed called", url=url)
     validation = validate_feed_source(url)
     if not validation.get("valid", False):
         logger.warning(f"No se parseará el feed inválido {url}: {validation.get('error')}")
@@ -88,6 +91,7 @@ def parse_feed(url: str) -> Optional[List[Dict]]:
             }
             entries.append(entry_data)
 
+        logger.info("Feed parsed successfully", url=url, parsed_entries=len(entries))
         return entries
     except Exception as exc:
         logger.error(f"Error al parsear feed {url}: {exc}")
@@ -95,6 +99,7 @@ def parse_feed(url: str) -> Optional[List[Dict]]:
 
 def detect_question(text: str) -> bool:
     """Detecta si un texto parece una oportunidad de negocio mediante IA."""
+    logger.debug("detect_question called", text_length=len(text) if text else 0)
     if not text:
         return False
 
@@ -116,6 +121,7 @@ def detect_question(text: str) -> bool:
 def check_user_feeds(feed: Dict) -> List[Dict]:
     """Revisa un feed y devuelve solo las entradas que parecen preguntas relevantes."""
     logger.info("🔄 Iniciando revisión de feed...")
+    logger.debug("check_user_feeds called", feed_id=feed.get("id"), user_id=feed.get("user_id"))
 
     try:
         url = feed.get("url")
@@ -125,6 +131,7 @@ def check_user_feeds(feed: Dict) -> List[Dict]:
 
         entries = parse_feed(url)
         if not entries:
+            logger.info("No entries parsed for feed", url=url)
             return []
 
         results: List[Dict] = []

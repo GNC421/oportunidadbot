@@ -12,8 +12,21 @@ from app.services import feed_parser, rsshub_resolver
 MAX_FEEDS_PER_USER = getattr(settings, "MAX_FEEDS_PER_USER", 10)
 
 
+def _log_command_entry(command_name: str, update: Update, args: Optional[list[str]] = None) -> None:
+    """Registra una traza uniforme al entrar en comandos y callbacks."""
+    user = update.effective_user
+    logger.debug(
+        "Entering handler",
+        handler=command_name,
+        user_id=user.id if user else None,
+        username=user.username if user else None,
+        args=args or [],
+    )
+
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Maneja el comando /start."""
+    _log_command_entry("start_command", update, context.args)
     user = update.effective_user
     welcome_text = (
         f"¡Hola {user.first_name}! 👋\n\n"
@@ -27,6 +40,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Maneja el comando /help."""
+    _log_command_entry("help_command", update, context.args)
     help_text = (
         "📋 **Lista de comandos disponibles:**\n\n"
         "/start - Mensaje de bienvenida\n"
@@ -85,6 +99,7 @@ def _find_user_feed(user_id: int, feed_id: int) -> Optional[Dict[str, Any]]:
 
 async def addgroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Añade un feed para el usuario actual a partir de una URL soportada."""
+    _log_command_entry("addgroup_command", update, context.args)
     user_id = _get_user_id(update)
     if not user_id:
         await update.message.reply_text("No pude identificar tu usuario. Inténtalo de nuevo.")
@@ -100,6 +115,7 @@ async def addgroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     normalized_url = _normalize_feed_url(raw_url)
+    logger.debug("URL normalized for addgroup", raw_url=raw_url, normalized_url=normalized_url)
     parsed = urlparse(normalized_url)
     if not parsed.scheme or not parsed.netloc:
         logger.warning("URL de feed inválida recibida: {}", raw_url)
@@ -112,6 +128,8 @@ async def addgroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await update.message.reply_text("La plataforma aún no está soportada para convertirla a RSS automáticamente.")
         return
 
+    logger.info("URL resolved to RSSHub", original_url=normalized_url, resolved_feed_url=resolved_feed_url)
+
     try:
         existing_feeds = _fetch_user_feeds(user_id)
         existing_urls = {
@@ -121,6 +139,7 @@ async def addgroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         }
 
         if resolved_feed_url in existing_urls:
+            logger.info("Feed already registered", user_id=user_id, feed_url=resolved_feed_url)
             await update.message.reply_text("Este feed ya está registrado en tus grupos.")
             return
 
@@ -167,6 +186,7 @@ async def addgroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 async def groups_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Lista los feeds del usuario actual."""
+    _log_command_entry("groups_command", update, context.args)
     user_id = _get_user_id(update)
     if not user_id:
         await update.message.reply_text("No pude identificar tu usuario. Inténtalo de nuevo.")
@@ -174,6 +194,7 @@ async def groups_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     try:
         feeds = _fetch_user_feeds(user_id)
+        logger.debug("User feeds loaded", user_id=user_id, feed_count=len(feeds))
         if not feeds:
             await update.message.reply_text("No tienes feeds registrados aún. Usa /addgroup para añadir uno.")
             return
@@ -194,6 +215,7 @@ async def groups_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def removegroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Elimina un feed RSS del usuario actual."""
+    _log_command_entry("removegroup_command", update, context.args)
     user_id = _get_user_id(update)
     if not user_id:
         await update.message.reply_text("No pude identificar tu usuario. Inténtalo de nuevo.")
@@ -233,6 +255,7 @@ async def removegroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def pausegroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Pausa un feed RSS del usuario actual."""
+    _log_command_entry("pausegroup_command", update, context.args)
     user_id = _get_user_id(update)
     if not user_id:
         await update.message.reply_text("No pude identificar tu usuario. Inténtalo de nuevo.")
@@ -272,6 +295,7 @@ async def pausegroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def resumegroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Reanuda un feed RSS del usuario actual."""
+    _log_command_entry("resumegroup_command", update, context.args)
     user_id = _get_user_id(update)
     if not user_id:
         await update.message.reply_text("No pude identificar tu usuario. Inténtalo de nuevo.")
@@ -311,12 +335,14 @@ async def resumegroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def echo_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Responde con el mismo texto que el usuario (solo para pruebas)."""
+    _log_command_entry("echo_message", update)
     text = update.message.text
     await update.message.reply_text(f"Echo: {text}")
 
 
 async def handle_quick_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Responde al botón de añadir un grupo o feed."""
+    _log_command_entry("handle_quick_add", update)
     query = update.callback_query
     await query.answer("Puedes añadir un feed con /addgroup [URL_del_feed_RSS].")
     await query.message.reply_text(
@@ -326,6 +352,7 @@ async def handle_quick_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 async def handle_tutorial(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Muestra un tutorial breve para el usuario."""
+    _log_command_entry("handle_tutorial", update)
     query = update.callback_query
     await query.answer()
     tutorial_text = (
@@ -340,6 +367,7 @@ async def handle_tutorial(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def handle_remind_later(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Responde al botón de recordar más tarde."""
+    _log_command_entry("handle_remind_later", update)
     query = update.callback_query
     await query.answer("Te recordaremos más tarde.")
     await query.message.reply_text(
@@ -349,6 +377,7 @@ async def handle_remind_later(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def handle_generate_alert(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Maneja la generación de respuesta para una alerta concreta."""
+    _log_command_entry("handle_generate_alert", update)
     query = update.callback_query
     feed_id = None
     if context.matches:
@@ -366,6 +395,7 @@ async def handle_generate_alert(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Registra errores y notifica al desarrollador (opcional)."""
+    logger.debug("Entering error_handler")
     logger.error(f"Excepción mientras se manejaba una actualización: {context.error}")
     if update and hasattr(update, "message") and update.message:
         await update.message.reply_text("Ocurrió un error inesperado. Por favor, inténtalo de nuevo más tarde.")
@@ -373,6 +403,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
 def register_handlers(application: Application) -> None:
     """Registra los handlers del bot en la aplicación."""
+    logger.info("Registering Telegram handlers")
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("addgroup", addgroup_command))
@@ -386,3 +417,4 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CallbackQueryHandler(handle_generate_alert, pattern=r"^generate_alert_(\d+)$"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo_message))
     application.add_error_handler(error_handler)
+    logger.info("Telegram handlers registered successfully")
