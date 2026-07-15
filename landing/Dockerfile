@@ -14,7 +14,7 @@ FROM node:20-alpine AS runner
 WORKDIR /landing
 
 ENV NODE_ENV=production
-ENV PORT=8000
+ENV PORT=8001
 ENV HOSTNAME=0.0.0.0
 
 # Copy package metadata (not strictly required if node_modules provided)
@@ -28,6 +28,6 @@ COPY --from=builder /landing/.next ./.next
 COPY --from=builder /landing/public ./public
 COPY --from=builder /landing/scripts ./scripts
 
-EXPOSE 8000
+EXPOSE 8001
 
 CMD ["npm", "run", "start"]
