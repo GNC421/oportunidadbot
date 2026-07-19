@@ -79,8 +79,9 @@ async def test_detector_retries_until_success(monkeypatch):
 
         def raise_for_status(self):
             if not self.ok:
-                raise httpx.HTTPStatusError("boom", request=None, response=None)
-
+                request = httpx.Request("POST", "https://nvidia.local/v1/chat/completions")
+                response = httpx.Response(500, request=request)
+                raise httpx.HTTPStatusError("boom", request=request, response=response)
         def json(self):
             return {"choices": [{"message": {"content": "true"}}]}
 
