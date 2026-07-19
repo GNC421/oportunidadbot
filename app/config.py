@@ -1,10 +1,17 @@
+from pydantic import ConfigDict, Field
 from pydantic_settings import BaseSettings
-from pydantic import Field
 from typing import Optional
 import os
 
 class Settings(BaseSettings):
     """Configuración de la aplicación cargada desde variables de entorno."""
+
+    model_config = ConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=True,
+        extra="ignore",
+    )
     
     BOT_TOKEN: str = Field(..., description="Token del bot de Telegram")
     
@@ -35,9 +42,4 @@ class Settings(BaseSettings):
     # Logging
     LOG_LEVEL: str = Field("INFO", description="Nivel de logging")
     
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = True
-
 settings = Settings()

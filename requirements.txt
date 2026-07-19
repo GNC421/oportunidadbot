@@ -37,3 +37,9 @@ tenacity==9.1.2
 
 # Logging
 loguru==0.7.3
+
+# Testing
+pytest==8.3.3
+pytest-asyncio==0.24.0
+pytest-mock==3.14.0
+pytest-cov==5.0.0
