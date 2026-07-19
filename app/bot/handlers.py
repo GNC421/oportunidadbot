@@ -11,6 +11,10 @@ from app.services import feed_parser, rsshub_resolver
 
 MAX_FEEDS_PER_USER = getattr(settings, "MAX_FEEDS_PER_USER", 10)
 
+MENU_ADD_SOURCE = "menu_add_source"
+MENU_MY_SOURCES = "menu_my_sources"
+MENU_HELP = "menu_help"
+
 
 def _log_command_entry(command_name: str, update: Update, args: Optional[list[str]] = None) -> None:
     """Registra una traza uniforme al entrar en comandos y callbacks."""
@@ -27,32 +31,41 @@ def _log_command_entry(command_name: str, update: Update, args: Optional[list[st
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Maneja el comando /start."""
     _log_command_entry("start_command", update, context.args)
-    user = update.effective_user
-    welcome_text = (
-        f"¡Hola {user.first_name}! 👋\n\n"
-        "Soy **OportunidadBot**, tu asistente para encontrar oportunidades.\n"
-        "Usa /help para ver qué puedo hacer."
+    await update.message.reply_text(
+        _get_main_menu_text(),
+        reply_markup=_build_main_menu_markup(),
     )
-    keyboard = [[InlineKeyboardButton("Visitar sitio", url="https://tusitio.com")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(welcome_text, reply_markup=reply_markup, parse_mode="Markdown")
+
+
+def _get_main_menu_text() -> str:
+    """Texto principal mostrado al usuario al iniciar el bot."""
+    return "🏠 OportunidadBot\n\n¿Qué quieres hacer?"
+
+
+def _build_main_menu_markup() -> InlineKeyboardMarkup:
+    """Construye el menú principal de navegación del bot."""
+    keyboard = [
+        [InlineKeyboardButton("➕ Añadir fuente", callback_data=MENU_ADD_SOURCE)],
+        [InlineKeyboardButton("📂 Mis fuentes", callback_data=MENU_MY_SOURCES)],
+        [InlineKeyboardButton("❓ Ayuda", callback_data=MENU_HELP)],
+    ]
+    return InlineKeyboardMarkup(keyboard)
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Maneja el comando /help."""
     _log_command_entry("help_command", update, context.args)
-    help_text = (
+    await update.message.reply_text(_get_help_text(), parse_mode="Markdown")
+
+
+def _get_help_text() -> str:
+    """Texto de ayuda con los comandos actualmente soportados."""
+    return (
         "📋 **Lista de comandos disponibles:**\n\n"
-        "/start - Mensaje de bienvenida\n"
+        "/start - Mostrar menú principal\n"
         "/help - Mostrar esta ayuda\n"
-        "/addgroup [URL] - Añadir un feed a partir de una URL soportada\n"
-        "/groups - Listar tus feeds\n"
-        "/removegroup [ID] - Eliminar un feed\n"
-        "/pausegroup [ID] - Pausar un feed\n"
-        "/resumegroup [ID] - Reanudar un feed\n"
-        "/ping - Verificar latencia (para pruebas)"
+        "/addgroup [URL] - Añadir un feed a partir de una URL soportada"
     )
-    await update.message.reply_text(help_text, parse_mode="Markdown")
 
 
 def _get_user_id(update: Update) -> Optional[int]:
@@ -393,6 +406,30 @@ async def handle_generate_alert(update: Update, context: ContextTypes.DEFAULT_TY
     await query.message.reply_text(message)
 
 
+async def handle_menu_add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Maneja la acción del menú principal para añadir una fuente."""
+    _log_command_entry("handle_menu_add_source", update)
+    query = update.callback_query
+    await query.answer("Función en preparación")
+    await query.message.reply_text("La opción para añadir fuente desde menú estará disponible pronto.")
+
+
+async def handle_menu_my_sources(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Maneja la acción del menú principal para listar fuentes del usuario."""
+    _log_command_entry("handle_menu_my_sources", update)
+    query = update.callback_query
+    await query.answer("Función en preparación")
+    await query.message.reply_text("La opción Mis fuentes desde menú estará disponible pronto.")
+
+
+async def handle_menu_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Maneja la acción de ayuda desde el menú principal."""
+    _log_command_entry("handle_menu_help", update)
+    query = update.callback_query
+    await query.answer()
+    await query.message.reply_text(_get_help_text(), parse_mode="Markdown")
+
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Registra errores y notifica al desarrollador (opcional)."""
     logger.debug("Entering error_handler")
@@ -407,10 +444,9 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("addgroup", addgroup_command))
-    application.add_handler(CommandHandler("groups", groups_command))
-    application.add_handler(CommandHandler("removegroup", removegroup_command))
-    application.add_handler(CommandHandler("pausegroup", pausegroup_command))
-    application.add_handler(CommandHandler("resumegroup", resumegroup_command))
+    application.add_handler(CallbackQueryHandler(handle_menu_add_source, pattern=f"^{MENU_ADD_SOURCE}$"))
+    application.add_handler(CallbackQueryHandler(handle_menu_my_sources, pattern=f"^{MENU_MY_SOURCES}$"))
+    application.add_handler(CallbackQueryHandler(handle_menu_help, pattern=f"^{MENU_HELP}$"))
     application.add_handler(CallbackQueryHandler(handle_quick_add, pattern="^quick_add$"))
     application.add_handler(CallbackQueryHandler(handle_tutorial, pattern="^tutorial$"))
     application.add_handler(CallbackQueryHandler(handle_remind_later, pattern="^remind_later$"))

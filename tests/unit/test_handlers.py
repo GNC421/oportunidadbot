@@ -87,7 +87,8 @@ async def test_handlers_start_and_help(fake_update_context):
     await handlers.start_command(update, context)
     await handlers.help_command(update, context)
 
-    assert "Hola" in replies[0]["text"]
+    assert "🏠 OportunidadBot" in replies[0]["text"]
+    assert "¿Qué quieres hacer?" in replies[0]["text"]
     assert "Lista de comandos" in replies[1]["text"]
 
 
@@ -140,10 +141,13 @@ async def test_handlers_callbacks(fake_update_context):
     await handlers.handle_quick_add(update, context)
     await handlers.handle_tutorial(update, context)
     await handlers.handle_remind_later(update, context)
+    await handlers.handle_menu_add_source(update, context)
+    await handlers.handle_menu_my_sources(update, context)
+    await handlers.handle_menu_help(update, context)
     context.matches = [SimpleNamespace(group=lambda _idx: "9")]
     await handlers.handle_generate_alert(update, context)
 
-    assert len(replies) == 4
+    assert len(replies) == 7
 
 
 def test_handlers_register_handlers():
