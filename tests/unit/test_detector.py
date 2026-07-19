@@ -49,8 +49,9 @@ async def test_detector_http500_retries_and_fails(monkeypatch):
 
     class FakeResponse:
         def raise_for_status(self):
-            raise httpx.HTTPStatusError("server error", request=None, response=None)
-
+            request = httpx.Request("POST", "https://nvidia.local/v1/chat/completions")
+            response = httpx.Response(500, request=request)
+            raise httpx.HTTPStatusError("server error", request=request, response=response)
         def json(self):
             return {}
 
