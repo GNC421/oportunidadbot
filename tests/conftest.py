@@ -107,7 +107,7 @@ def alert_factory() -> Any:
 
 @pytest.fixture
 def fake_update_context() -> Any:
-    def _factory(user_id: int = 101, first_name: str = "Tester", username: str = "tester", args: list[str] | None = None) -> tuple[Any, Any]:
+    def _factory(user_id: int = 101, first_name: str = "Tester", username: str = "tester", args: list[str] | None = None) -> tuple[Any, Any, list[dict[str, Any]]]:
         replies: list[dict[str, Any]] = []
 
         async def reply_text(text: str, **kwargs: Any) -> None:
