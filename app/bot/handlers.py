@@ -201,6 +201,36 @@ def _build_feed_card(feed: Dict[str, Any]) -> tuple[str, InlineKeyboardMarkup]:
     return card_text, keyboard
 
 
+def _build_delete_confirmation(feed: Dict[str, Any]) -> tuple[str, InlineKeyboardMarkup]:
+    """Construye el mensaje de confirmación para eliminar un feed."""
+    feed_id = feed.get("id")
+    feed_name = _feed_display_name(str(feed.get("url") or ""))
+    text = (
+        "⚠ ¿Seguro que deseas eliminar esta fuente?\n\n"
+        f"{feed_name}\n\n"
+        "Esta acción no puede deshacerse."
+    )
+    markup = InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("✅ Eliminar", callback_data=f"feed_delete_confirm_{feed_id}")],
+            [InlineKeyboardButton("❌ Cancelar", callback_data=f"feed_delete_cancel_{feed_id}")],
+        ]
+    )
+    return text, markup
+
+
+def _build_remaining_feeds_text(feeds: list[Dict[str, Any]]) -> str:
+    """Construye un resumen textual de las fuentes restantes."""
+    if not feeds:
+        return "No te quedan fuentes registradas. Usa ➕ Añadir fuente para crear una nueva."
+
+    lines = ["📂 Fuentes restantes:"]
+    for feed in feeds:
+        icon = "🟢" if bool(feed.get("is_active", True)) else "⏸"
+        lines.append(f"- {icon} {_feed_display_name(str(feed.get('url') or ''))}")
+    return "\n".join(lines)
+
+
 def _delete_user_feed(user_id: int, feed_id: int) -> None:
     """Elimina un feed del usuario mediante la capa de persistencia."""
     database.supabase.table("feeds").delete().eq("id", feed_id).eq("user_id", user_id).execute()
@@ -639,11 +669,87 @@ async def handle_feed_resume_callback(update: Update, context: ContextTypes.DEFA
     )
 
 
-async def handle_feed_delete_placeholder(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Placeholder temporal para eliminar fuentes desde tarjeta."""
-    _log_command_entry("handle_feed_delete_placeholder", update)
+async def handle_feed_delete_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Solicita confirmación antes de eliminar una fuente."""
+    _log_command_entry("handle_feed_delete_request", update)
     query = update.callback_query
-    await query.answer("Esta acción estará disponible pronto")
+    user_id = _get_user_id(update)
+    if not user_id:
+        await query.answer("No pude identificar tu usuario.", show_alert=True)
+        return
+
+    feed_id = _parse_feed_id_from_callback_data(query.data or "", "feed_delete_")
+    if feed_id is None:
+        await query.answer("No pude identificar la fuente.", show_alert=True)
+        return
+
+    feed = _find_user_feed(user_id, feed_id)
+    if not feed:
+        await query.answer("No encontré esa fuente en tu cuenta.", show_alert=True)
+        return
+
+    text, markup = _build_delete_confirmation(feed)
+    await query.edit_message_text(text, reply_markup=markup)
+    await query.answer()
+
+
+async def handle_feed_delete_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Cancela la eliminación y restaura la tarjeta original del feed."""
+    _log_command_entry("handle_feed_delete_cancel", update)
+    query = update.callback_query
+    user_id = _get_user_id(update)
+    if not user_id:
+        await query.answer("No pude identificar tu usuario.", show_alert=True)
+        return
+
+    feed_id = _parse_feed_id_from_callback_data(query.data or "", "feed_delete_cancel_")
+    if feed_id is None:
+        await query.answer("No pude identificar la fuente.", show_alert=True)
+        return
+
+    feed = _find_user_feed(user_id, feed_id)
+    if not feed:
+        await query.answer("La fuente ya no está disponible.", show_alert=True)
+        return
+
+    card_text, card_markup = _build_feed_card(feed)
+    await query.edit_message_text(card_text, reply_markup=card_markup)
+    await query.answer("Eliminación cancelada")
+
+
+async def handle_feed_delete_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Confirma la eliminación de una fuente y refresca el listado restante."""
+    _log_command_entry("handle_feed_delete_confirm", update)
+    query = update.callback_query
+    user_id = _get_user_id(update)
+    if not user_id:
+        await query.answer("No pude identificar tu usuario.", show_alert=True)
+        return
+
+    feed_id = _parse_feed_id_from_callback_data(query.data or "", "feed_delete_confirm_")
+    if feed_id is None:
+        await query.answer("No pude identificar la fuente.", show_alert=True)
+        return
+
+    try:
+        feed = _find_user_feed(user_id, feed_id)
+        if not feed:
+            await query.answer("La fuente ya no está disponible.", show_alert=True)
+            return
+
+        _delete_user_feed(user_id, feed_id)
+        remaining_feeds = [item for item in _fetch_user_feeds(user_id) if item.get("id") != feed_id]
+        remaining_text = _build_remaining_feeds_text(remaining_feeds)
+        final_text = f"✅ Fuente eliminada correctamente.\n\n{remaining_text}"
+        await query.edit_message_text(final_text)
+        await query.answer("Fuente eliminada")
+    except Exception:
+        logger.exception(
+            "Error al eliminar feed desde callback",
+            user_id=user_id,
+            feed_id=feed_id,
+        )
+        await query.answer("No se pudo eliminar la fuente.", show_alert=True)
 
 
 async def handle_menu_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -684,7 +790,9 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CallbackQueryHandler(handle_menu_help, pattern=f"^{MENU_HELP}$"))
     application.add_handler(CallbackQueryHandler(handle_feed_pause_callback, pattern=r"^feed_pause_(\d+)$"))
     application.add_handler(CallbackQueryHandler(handle_feed_resume_callback, pattern=r"^feed_resume_(\d+)$"))
-    application.add_handler(CallbackQueryHandler(handle_feed_delete_placeholder, pattern=r"^feed_delete_(\d+)$"))
+    application.add_handler(CallbackQueryHandler(handle_feed_delete_confirm, pattern=r"^feed_delete_confirm_(\d+)$"))
+    application.add_handler(CallbackQueryHandler(handle_feed_delete_cancel, pattern=r"^feed_delete_cancel_(\d+)$"))
+    application.add_handler(CallbackQueryHandler(handle_feed_delete_request, pattern=r"^feed_delete_(\d+)$"))
     application.add_handler(CallbackQueryHandler(handle_tutorial, pattern="^tutorial$"))
     application.add_handler(CallbackQueryHandler(handle_remind_later, pattern="^remind_later$"))
     application.add_handler(CallbackQueryHandler(handle_generate_alert, pattern=r"^generate_alert_(\d+)$"))

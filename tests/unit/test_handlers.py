@@ -223,7 +223,6 @@ async def test_handlers_callbacks(fake_update_context):
     await handlers.handle_menu_help(update, context)
     context.matches = [SimpleNamespace(group=lambda _idx: "9")]
     await handlers.handle_generate_alert(update, context)
-    await handlers.handle_feed_delete_placeholder(update, context)
 
     assert len(replies) == 7
 
@@ -282,6 +281,81 @@ async def test_handlers_feed_resume_updates_status_and_edits_message(monkeypatch
     buttons = edits[0]["kwargs"]["reply_markup"].inline_keyboard[0]
     assert buttons[0].callback_data == "feed_pause_42"
     assert buttons[1].callback_data == "feed_delete_42"
+
+
+@pytest.mark.asyncio
+async def test_handlers_feed_delete_request_shows_confirmation(monkeypatch):
+    handlers = _load_handlers_module()
+    update, context, replies, edits = _build_callback_update("feed_delete_42")
+    monkeypatch.setattr(
+        handlers,
+        "_find_user_feed",
+        lambda *_a: {"id": 42, "url": "https://reddit.com/r/murcia", "is_active": True},
+    )
+
+    await handlers.handle_feed_delete_request(update, context)
+
+    assert len(replies) == 0
+    assert len(edits) == 1
+    assert "¿Seguro que deseas eliminar esta fuente" in edits[0]["text"]
+    assert "Reddit Murcia" in edits[0]["text"]
+    assert "no puede deshacerse" in edits[0]["text"]
+    keyboard = edits[0]["kwargs"]["reply_markup"].inline_keyboard
+    assert keyboard[0][0].callback_data == "feed_delete_confirm_42"
+    assert keyboard[1][0].callback_data == "feed_delete_cancel_42"
+
+
+@pytest.mark.asyncio
+async def test_handlers_feed_delete_cancel_restores_card(monkeypatch):
+    handlers = _load_handlers_module()
+    update, context, replies, edits = _build_callback_update("feed_delete_cancel_42")
+    monkeypatch.setattr(
+        handlers,
+        "_find_user_feed",
+        lambda *_a: {"id": 42, "url": "https://reddit.com/r/murcia", "is_active": True},
+    )
+
+    await handlers.handle_feed_delete_cancel(update, context)
+
+    assert len(replies) == 0
+    assert len(edits) == 1
+    assert edits[0]["text"].startswith("🟢 Reddit Murcia")
+    buttons = edits[0]["kwargs"]["reply_markup"].inline_keyboard[0]
+    assert buttons[0].callback_data == "feed_pause_42"
+    assert buttons[1].callback_data == "feed_delete_42"
+
+
+@pytest.mark.asyncio
+async def test_handlers_feed_delete_confirm_deletes_and_refreshes_remaining(monkeypatch):
+    handlers = _load_handlers_module()
+    update, context, replies, edits = _build_callback_update("feed_delete_confirm_42")
+
+    monkeypatch.setattr(
+        handlers,
+        "_find_user_feed",
+        lambda *_a: {"id": 42, "url": "https://reddit.com/r/murcia", "is_active": True},
+    )
+
+    delete_calls: list[tuple[int, int]] = []
+    monkeypatch.setattr(
+        handlers,
+        "_delete_user_feed",
+        lambda user_id, feed_id: delete_calls.append((user_id, feed_id)),
+    )
+    monkeypatch.setattr(
+        handlers,
+        "_fetch_user_feeds",
+        lambda _uid: [{"id": 77, "url": "https://reddit.com/r/alicante", "is_active": False}],
+    )
+
+    await handlers.handle_feed_delete_confirm(update, context)
+
+    assert delete_calls == [(101, 42)]
+    assert len(replies) == 0
+    assert len(edits) == 1
+    assert "Fuente eliminada correctamente" in edits[0]["text"]
+    assert "Fuentes restantes" in edits[0]["text"]
+    assert "Reddit Alicante" in edits[0]["text"]
 
 
 @pytest.mark.asyncio
