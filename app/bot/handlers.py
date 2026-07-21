@@ -1,8 +1,17 @@
 from typing import Any, Dict, Optional
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    ConversationHandler,
+    MessageHandler,
+    filters,
+)
 from loguru import logger
 
 from app import database
@@ -10,6 +19,12 @@ from app.config import settings
 from app.services import feed_parser, rsshub_resolver
 
 MAX_FEEDS_PER_USER = getattr(settings, "MAX_FEEDS_PER_USER", 10)
+
+MENU_ADD_SOURCE = "menu_add_source"
+MENU_MY_SOURCES = "menu_my_sources"
+MENU_HELP = "menu_help"
+
+WAITING_URL = 1
 
 
 def _log_command_entry(command_name: str, update: Update, args: Optional[list[str]] = None) -> None:
@@ -27,32 +42,52 @@ def _log_command_entry(command_name: str, update: Update, args: Optional[list[st
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Maneja el comando /start."""
     _log_command_entry("start_command", update, context.args)
-    user = update.effective_user
-    welcome_text = (
-        f"¡Hola {user.first_name}! 👋\n\n"
-        "Soy **OportunidadBot**, tu asistente para encontrar oportunidades.\n"
-        "Usa /help para ver qué puedo hacer."
+    await update.message.reply_text(
+        _get_main_menu_text(),
+        reply_markup=_build_main_menu_markup(),
     )
-    keyboard = [[InlineKeyboardButton("Visitar sitio", url="https://tusitio.com")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(welcome_text, reply_markup=reply_markup, parse_mode="Markdown")
+
+
+def _get_main_menu_text() -> str:
+    """Texto principal mostrado al usuario al iniciar el bot."""
+    return "🏠 OportunidadBot\n\n¿Qué quieres hacer?"
+
+
+def _build_main_menu_markup() -> InlineKeyboardMarkup:
+    """Construye el menú principal de navegación del bot."""
+    keyboard = [
+        [InlineKeyboardButton("➕ Añadir fuente", callback_data=MENU_ADD_SOURCE)],
+        [InlineKeyboardButton("📂 Mis fuentes", callback_data=MENU_MY_SOURCES)],
+        [InlineKeyboardButton("❓ Ayuda", callback_data=MENU_HELP)],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+def _get_add_source_prompt_text() -> str:
+    """Texto guía para solicitar una URL al usuario."""
+    return (
+        "Pega la URL que deseas monitorizar.\n\n"
+        "Ejemplos:\n\n"
+        "https://reddit.com/r/murcia\n\n"
+        "https://reddit.com/r/alicante\n\n"
+        "Escribe /cancel para cancelar."
+    )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Maneja el comando /help."""
     _log_command_entry("help_command", update, context.args)
-    help_text = (
+    await update.message.reply_text(_get_help_text(), parse_mode="Markdown")
+
+
+def _get_help_text() -> str:
+    """Texto de ayuda con los comandos actualmente soportados."""
+    return (
         "📋 **Lista de comandos disponibles:**\n\n"
-        "/start - Mensaje de bienvenida\n"
+        "/start - Mostrar menú principal\n"
         "/help - Mostrar esta ayuda\n"
-        "/addgroup [URL] - Añadir un feed a partir de una URL soportada\n"
-        "/groups - Listar tus feeds\n"
-        "/removegroup [ID] - Eliminar un feed\n"
-        "/pausegroup [ID] - Pausar un feed\n"
-        "/resumegroup [ID] - Reanudar un feed\n"
-        "/ping - Verificar latencia (para pruebas)"
+        "/addgroup [URL] - Añadir un feed a partir de una URL soportada"
     )
-    await update.message.reply_text(help_text, parse_mode="Markdown")
 
 
 def _get_user_id(update: Update) -> Optional[int]:
@@ -79,6 +114,123 @@ def _fetch_user_feeds(user_id: int) -> list[Dict[str, Any]]:
     return database.get_user_feeds(user_id)
 
 
+def _feed_display_name(feed_url: str) -> str:
+    """Construye un nombre legible para mostrar el feed al usuario."""
+    parsed = urlparse(feed_url)
+    netloc = (parsed.netloc or "").lower()
+    path_parts = [part for part in parsed.path.split("/") if part]
+
+    if "reddit.com" in netloc and len(path_parts) >= 2 and path_parts[0] == "r":
+        subreddit = path_parts[1].replace("-", " ").replace("_", " ").strip().title()
+        if subreddit:
+            return f"Reddit {subreddit}"
+
+    host = netloc.replace("www.", "")
+    if host:
+        return host
+    return "Fuente RSS"
+
+
+def _parse_iso_datetime(raw_value: Optional[str]) -> Optional[datetime]:
+    """Intenta parsear fechas ISO devolviendo datetime con zona horaria."""
+    if not raw_value:
+        return None
+
+    value = raw_value.strip()
+    if not value:
+        return None
+
+    if value.endswith("Z"):
+        value = value[:-1] + "+00:00"
+
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _relative_last_check_text(feed: Dict[str, Any]) -> str:
+    """Genera el texto de última revisión para el feed."""
+    last_check = _parse_iso_datetime(str(feed.get("last_check") or ""))
+    if not last_check:
+        return "Sin revisiones todavía"
+
+    now = datetime.now(timezone.utc)
+    delta_seconds = int((now - last_check).total_seconds())
+    if delta_seconds < 60:
+        return "Hace menos de un minuto"
+
+    minutes = delta_seconds // 60
+    if minutes < 60:
+        suffix = "minuto" if minutes == 1 else "minutos"
+        return f"Hace {minutes} {suffix}"
+
+    hours = minutes // 60
+    if hours < 24:
+        suffix = "hora" if hours == 1 else "horas"
+        return f"Hace {hours} {suffix}"
+
+    days = hours // 24
+    suffix = "día" if days == 1 else "días"
+    return f"Hace {days} {suffix}"
+
+
+def _build_feed_card(feed: Dict[str, Any]) -> tuple[str, InlineKeyboardMarkup]:
+    """Construye texto y botones para renderizar un feed como tarjeta."""
+    feed_id = feed.get("id")
+    feed_url = str(feed.get("url") or "")
+    is_active = bool(feed.get("is_active", True))
+    icon = "🟢" if is_active else "⏸"
+    name = _feed_display_name(feed_url)
+    last_check_text = _relative_last_check_text(feed)
+
+    card_text = f"{icon} {name}\n\nÚltima revisión:\n{last_check_text}"
+
+    if is_active:
+        primary_button = InlineKeyboardButton("⏸ Pausar", callback_data=f"feed_pause_{feed_id}")
+    else:
+        primary_button = InlineKeyboardButton("▶ Reanudar", callback_data=f"feed_resume_{feed_id}")
+
+    keyboard = InlineKeyboardMarkup(
+        [[primary_button, InlineKeyboardButton("🗑 Eliminar", callback_data=f"feed_delete_{feed_id}")]]
+    )
+    return card_text, keyboard
+
+
+def _build_delete_confirmation(feed: Dict[str, Any]) -> tuple[str, InlineKeyboardMarkup]:
+    """Construye el mensaje de confirmación para eliminar un feed."""
+    feed_id = feed.get("id")
+    feed_name = _feed_display_name(str(feed.get("url") or ""))
+    text = (
+        "⚠ ¿Seguro que deseas eliminar esta fuente?\n\n"
+        f"{feed_name}\n\n"
+        "Esta acción no puede deshacerse."
+    )
+    markup = InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("✅ Eliminar", callback_data=f"feed_delete_confirm_{feed_id}")],
+            [InlineKeyboardButton("❌ Cancelar", callback_data=f"feed_delete_cancel_{feed_id}")],
+        ]
+    )
+    return text, markup
+
+
+def _build_remaining_feeds_text(feeds: list[Dict[str, Any]]) -> str:
+    """Construye un resumen textual de las fuentes restantes."""
+    if not feeds:
+        return "No te quedan fuentes registradas. Usa ➕ Añadir fuente para crear una nueva."
+
+    lines = ["📂 Fuentes restantes:"]
+    for feed in feeds:
+        icon = "🟢" if bool(feed.get("is_active", True)) else "⏸"
+        lines.append(f"- {icon} {_feed_display_name(str(feed.get('url') or ''))}")
+    return "\n".join(lines)
+
+
 def _delete_user_feed(user_id: int, feed_id: int) -> None:
     """Elimina un feed del usuario mediante la capa de persistencia."""
     database.supabase.table("feeds").delete().eq("id", feed_id).eq("user_id", user_id).execute()
@@ -100,16 +252,21 @@ def _find_user_feed(user_id: int, feed_id: int) -> Optional[Dict[str, Any]]:
 async def addgroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Añade un feed para el usuario actual a partir de una URL soportada."""
     _log_command_entry("addgroup_command", update, context.args)
-    user_id = _get_user_id(update)
-    if not user_id:
-        await update.message.reply_text("No pude identificar tu usuario. Inténtalo de nuevo.")
-        return
-
     if not context.args:
         await update.message.reply_text("Uso: /addgroup [URL]")
         return
 
     raw_url = " ".join(context.args).strip()
+    await _addgroup_from_raw_url(update, raw_url)
+
+
+async def _addgroup_from_raw_url(update: Update, raw_url: str) -> None:
+    """Ejecuta el flujo de alta de feed desde una URL en texto plano."""
+    user_id = _get_user_id(update)
+    if not user_id:
+        await update.message.reply_text("No pude identificar tu usuario. Inténtalo de nuevo.")
+        return
+
     if not raw_url:
         await update.message.reply_text("La URL del feed no puede estar vacía.")
         return
@@ -182,6 +339,21 @@ async def addgroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             user_id=user_id,
         )
         await update.message.reply_text("No se pudo guardar el feed en este momento. Inténtalo más tarde.")
+
+
+async def cancel_add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Cancela el flujo guiado para alta de fuente."""
+    _log_command_entry("cancel_add_source", update, context.args)
+    await update.message.reply_text("Operación cancelada. Puedes volver al menú con /start.")
+    return ConversationHandler.END
+
+
+async def waiting_url_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Recibe y procesa la URL pegada por el usuario en el flujo guiado."""
+    _log_command_entry("waiting_url_message", update)
+    raw_url = (update.message.text or "").strip()
+    await _addgroup_from_raw_url(update, raw_url)
+    return ConversationHandler.END
 
 
 async def groups_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -340,14 +512,13 @@ async def echo_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text(f"Echo: {text}")
 
 
-async def handle_quick_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_quick_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Responde al botón de añadir un grupo o feed."""
     _log_command_entry("handle_quick_add", update)
     query = update.callback_query
-    await query.answer("Puedes añadir un feed con /addgroup [URL_del_feed_RSS].")
-    await query.message.reply_text(
-        "Para añadir un grupo o feed, usa:\n\n/addgroup [URL_del_feed_RSS]\n\nEjemplo:\n/addgroup https://example.com/feed"
-    )
+    await query.answer()
+    await query.message.reply_text(_get_add_source_prompt_text())
+    return WAITING_URL
 
 
 async def handle_tutorial(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -393,6 +564,202 @@ async def handle_generate_alert(update: Update, context: ContextTypes.DEFAULT_TY
     await query.message.reply_text(message)
 
 
+async def handle_menu_add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Maneja la acción del menú principal para añadir una fuente."""
+    _log_command_entry("handle_menu_add_source", update)
+    query = update.callback_query
+    await query.answer()
+    await query.message.reply_text(_get_add_source_prompt_text())
+    return WAITING_URL
+
+
+async def handle_menu_my_sources(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Maneja la acción del menú principal para listar fuentes del usuario."""
+    _log_command_entry("handle_menu_my_sources", update)
+    query = update.callback_query
+    await query.answer()
+
+    user_id = _get_user_id(update)
+    if not user_id:
+        await query.message.reply_text("No pude identificar tu usuario. Inténtalo de nuevo.")
+        return
+
+    try:
+        feeds = _fetch_user_feeds(user_id)
+        if not feeds:
+            await query.message.reply_text("No tienes fuentes registradas todavía. Usa ➕ Añadir fuente para empezar.")
+            return
+
+        for feed in feeds:
+            card_text, card_markup = _build_feed_card(feed)
+            await query.message.reply_text(card_text, reply_markup=card_markup)
+    except Exception:
+        logger.exception(
+            "Error al listar fuentes del menú para usuario {user_id}",
+            user_id=user_id,
+        )
+        await query.message.reply_text("No se pudieron cargar tus fuentes en este momento.")
+
+
+def _parse_feed_id_from_callback_data(callback_data: str, prefix: str) -> Optional[int]:
+    """Extrae el id interno del feed desde el callback_data."""
+    if not callback_data.startswith(prefix):
+        return None
+    try:
+        return int(callback_data[len(prefix) :])
+    except ValueError:
+        return None
+
+
+async def _handle_feed_status_toggle(update: Update, is_active: bool, action_name: str, callback_prefix: str) -> None:
+    """Actualiza el estado del feed y refresca la tarjeta en el mismo mensaje."""
+    _log_command_entry(action_name, update)
+    query = update.callback_query
+    user_id = _get_user_id(update)
+    if not user_id:
+        await query.answer("No pude identificar tu usuario.", show_alert=True)
+        return
+
+    callback_data = query.data or ""
+    feed_id = _parse_feed_id_from_callback_data(callback_data, callback_prefix)
+    if feed_id is None:
+        await query.answer("No pude identificar la fuente.", show_alert=True)
+        return
+
+    try:
+        feed = _find_user_feed(user_id, feed_id)
+        if not feed:
+            await query.answer("No encontré esa fuente en tu cuenta.", show_alert=True)
+            return
+
+        _update_user_feed_status(user_id, feed_id, is_active)
+        updated_feed = dict(feed)
+        updated_feed["is_active"] = is_active
+        card_text, card_markup = _build_feed_card(updated_feed)
+
+        await query.edit_message_text(card_text, reply_markup=card_markup)
+        await query.answer("Estado actualizado")
+    except Exception:
+        logger.exception(
+            "Error al actualizar estado de feed desde callback",
+            user_id=user_id,
+            feed_id=feed_id,
+            is_active=is_active,
+        )
+        await query.answer("No se pudo actualizar el estado.", show_alert=True)
+
+
+async def handle_feed_pause_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Pausa un feed desde la tarjeta inline."""
+    await _handle_feed_status_toggle(
+        update=update,
+        is_active=False,
+        action_name="handle_feed_pause_callback",
+        callback_prefix="feed_pause_",
+    )
+
+
+async def handle_feed_resume_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Reanuda un feed desde la tarjeta inline."""
+    await _handle_feed_status_toggle(
+        update=update,
+        is_active=True,
+        action_name="handle_feed_resume_callback",
+        callback_prefix="feed_resume_",
+    )
+
+
+async def handle_feed_delete_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Solicita confirmación antes de eliminar una fuente."""
+    _log_command_entry("handle_feed_delete_request", update)
+    query = update.callback_query
+    user_id = _get_user_id(update)
+    if not user_id:
+        await query.answer("No pude identificar tu usuario.", show_alert=True)
+        return
+
+    feed_id = _parse_feed_id_from_callback_data(query.data or "", "feed_delete_")
+    if feed_id is None:
+        await query.answer("No pude identificar la fuente.", show_alert=True)
+        return
+
+    feed = _find_user_feed(user_id, feed_id)
+    if not feed:
+        await query.answer("No encontré esa fuente en tu cuenta.", show_alert=True)
+        return
+
+    text, markup = _build_delete_confirmation(feed)
+    await query.edit_message_text(text, reply_markup=markup)
+    await query.answer()
+
+
+async def handle_feed_delete_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Cancela la eliminación y restaura la tarjeta original del feed."""
+    _log_command_entry("handle_feed_delete_cancel", update)
+    query = update.callback_query
+    user_id = _get_user_id(update)
+    if not user_id:
+        await query.answer("No pude identificar tu usuario.", show_alert=True)
+        return
+
+    feed_id = _parse_feed_id_from_callback_data(query.data or "", "feed_delete_cancel_")
+    if feed_id is None:
+        await query.answer("No pude identificar la fuente.", show_alert=True)
+        return
+
+    feed = _find_user_feed(user_id, feed_id)
+    if not feed:
+        await query.answer("La fuente ya no está disponible.", show_alert=True)
+        return
+
+    card_text, card_markup = _build_feed_card(feed)
+    await query.edit_message_text(card_text, reply_markup=card_markup)
+    await query.answer("Eliminación cancelada")
+
+
+async def handle_feed_delete_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Confirma la eliminación de una fuente y refresca el listado restante."""
+    _log_command_entry("handle_feed_delete_confirm", update)
+    query = update.callback_query
+    user_id = _get_user_id(update)
+    if not user_id:
+        await query.answer("No pude identificar tu usuario.", show_alert=True)
+        return
+
+    feed_id = _parse_feed_id_from_callback_data(query.data or "", "feed_delete_confirm_")
+    if feed_id is None:
+        await query.answer("No pude identificar la fuente.", show_alert=True)
+        return
+
+    try:
+        feed = _find_user_feed(user_id, feed_id)
+        if not feed:
+            await query.answer("La fuente ya no está disponible.", show_alert=True)
+            return
+
+        _delete_user_feed(user_id, feed_id)
+        remaining_feeds = [item for item in _fetch_user_feeds(user_id) if item.get("id") != feed_id]
+        remaining_text = _build_remaining_feeds_text(remaining_feeds)
+        final_text = f"✅ Fuente eliminada correctamente.\n\n{remaining_text}"
+        await query.edit_message_text(final_text)
+        await query.answer("Fuente eliminada")
+    except Exception:
+        logger.exception(
+            "Error al eliminar feed desde callback",
+            user_id=user_id,
+            feed_id=feed_id,
+        )
+        await query.answer("No se pudo eliminar la fuente.", show_alert=True)
+
+
+async def handle_menu_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Maneja la acción de ayuda desde el menú principal."""
+    _log_command_entry("handle_menu_help", update)
+    query = update.callback_query
+    await query.answer()
+    await query.message.reply_text(_get_help_text(), parse_mode="Markdown")
+
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Registra errores y notifica al desarrollador (opcional)."""
     logger.debug("Entering error_handler")
@@ -404,14 +771,28 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 def register_handlers(application: Application) -> None:
     """Registra los handlers del bot en la aplicación."""
     logger.info("Registering Telegram handlers")
+    add_source_conversation = ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(handle_menu_add_source, pattern=f"^{MENU_ADD_SOURCE}$"),
+            CallbackQueryHandler(handle_quick_add, pattern="^quick_add$"),
+        ],
+        states={
+            WAITING_URL: [MessageHandler(filters.TEXT & ~filters.COMMAND, waiting_url_message)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel_add_source)],
+    )
+
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("addgroup", addgroup_command))
-    application.add_handler(CommandHandler("groups", groups_command))
-    application.add_handler(CommandHandler("removegroup", removegroup_command))
-    application.add_handler(CommandHandler("pausegroup", pausegroup_command))
-    application.add_handler(CommandHandler("resumegroup", resumegroup_command))
-    application.add_handler(CallbackQueryHandler(handle_quick_add, pattern="^quick_add$"))
+    application.add_handler(add_source_conversation)
+    application.add_handler(CallbackQueryHandler(handle_menu_my_sources, pattern=f"^{MENU_MY_SOURCES}$"))
+    application.add_handler(CallbackQueryHandler(handle_menu_help, pattern=f"^{MENU_HELP}$"))
+    application.add_handler(CallbackQueryHandler(handle_feed_pause_callback, pattern=r"^feed_pause_(\d+)$"))
+    application.add_handler(CallbackQueryHandler(handle_feed_resume_callback, pattern=r"^feed_resume_(\d+)$"))
+    application.add_handler(CallbackQueryHandler(handle_feed_delete_confirm, pattern=r"^feed_delete_confirm_(\d+)$"))
+    application.add_handler(CallbackQueryHandler(handle_feed_delete_cancel, pattern=r"^feed_delete_cancel_(\d+)$"))
+    application.add_handler(CallbackQueryHandler(handle_feed_delete_request, pattern=r"^feed_delete_(\d+)$"))
     application.add_handler(CallbackQueryHandler(handle_tutorial, pattern="^tutorial$"))
     application.add_handler(CallbackQueryHandler(handle_remind_later, pattern="^remind_later$"))
     application.add_handler(CallbackQueryHandler(handle_generate_alert, pattern=r"^generate_alert_(\d+)$"))
