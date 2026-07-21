@@ -2,7 +2,15 @@ from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    ConversationHandler,
+    MessageHandler,
+    filters,
+)
 from loguru import logger
 
 from app import database
@@ -14,6 +22,8 @@ MAX_FEEDS_PER_USER = getattr(settings, "MAX_FEEDS_PER_USER", 10)
 MENU_ADD_SOURCE = "menu_add_source"
 MENU_MY_SOURCES = "menu_my_sources"
 MENU_HELP = "menu_help"
+
+WAITING_URL = 1
 
 
 def _log_command_entry(command_name: str, update: Update, args: Optional[list[str]] = None) -> None:
@@ -50,6 +60,17 @@ def _build_main_menu_markup() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("❓ Ayuda", callback_data=MENU_HELP)],
     ]
     return InlineKeyboardMarkup(keyboard)
+
+
+def _get_add_source_prompt_text() -> str:
+    """Texto guía para solicitar una URL al usuario."""
+    return (
+        "Pega la URL que deseas monitorizar.\n\n"
+        "Ejemplos:\n\n"
+        "https://reddit.com/r/murcia\n\n"
+        "https://reddit.com/r/alicante\n\n"
+        "Escribe /cancel para cancelar."
+    )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -113,16 +134,21 @@ def _find_user_feed(user_id: int, feed_id: int) -> Optional[Dict[str, Any]]:
 async def addgroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Añade un feed para el usuario actual a partir de una URL soportada."""
     _log_command_entry("addgroup_command", update, context.args)
-    user_id = _get_user_id(update)
-    if not user_id:
-        await update.message.reply_text("No pude identificar tu usuario. Inténtalo de nuevo.")
-        return
-
     if not context.args:
         await update.message.reply_text("Uso: /addgroup [URL]")
         return
 
     raw_url = " ".join(context.args).strip()
+    await _addgroup_from_raw_url(update, raw_url)
+
+
+async def _addgroup_from_raw_url(update: Update, raw_url: str) -> None:
+    """Ejecuta el flujo de alta de feed desde una URL en texto plano."""
+    user_id = _get_user_id(update)
+    if not user_id:
+        await update.message.reply_text("No pude identificar tu usuario. Inténtalo de nuevo.")
+        return
+
     if not raw_url:
         await update.message.reply_text("La URL del feed no puede estar vacía.")
         return
@@ -195,6 +221,21 @@ async def addgroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             user_id=user_id,
         )
         await update.message.reply_text("No se pudo guardar el feed en este momento. Inténtalo más tarde.")
+
+
+async def cancel_add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Cancela el flujo guiado para alta de fuente."""
+    _log_command_entry("cancel_add_source", update, context.args)
+    await update.message.reply_text("Operación cancelada. Puedes volver al menú con /start.")
+    return ConversationHandler.END
+
+
+async def waiting_url_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Recibe y procesa la URL pegada por el usuario en el flujo guiado."""
+    _log_command_entry("waiting_url_message", update)
+    raw_url = (update.message.text or "").strip()
+    await _addgroup_from_raw_url(update, raw_url)
+    return ConversationHandler.END
 
 
 async def groups_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -353,14 +394,13 @@ async def echo_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text(f"Echo: {text}")
 
 
-async def handle_quick_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_quick_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Responde al botón de añadir un grupo o feed."""
     _log_command_entry("handle_quick_add", update)
     query = update.callback_query
-    await query.answer("Puedes añadir un feed con /addgroup [URL_del_feed_RSS].")
-    await query.message.reply_text(
-        "Para añadir un grupo o feed, usa:\n\n/addgroup [URL_del_feed_RSS]\n\nEjemplo:\n/addgroup https://example.com/feed"
-    )
+    await query.answer()
+    await query.message.reply_text(_get_add_source_prompt_text())
+    return WAITING_URL
 
 
 async def handle_tutorial(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -406,12 +446,13 @@ async def handle_generate_alert(update: Update, context: ContextTypes.DEFAULT_TY
     await query.message.reply_text(message)
 
 
-async def handle_menu_add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_menu_add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Maneja la acción del menú principal para añadir una fuente."""
     _log_command_entry("handle_menu_add_source", update)
     query = update.callback_query
-    await query.answer("Función en preparación")
-    await query.message.reply_text("La opción para añadir fuente desde menú estará disponible pronto.")
+    await query.answer()
+    await query.message.reply_text(_get_add_source_prompt_text())
+    return WAITING_URL
 
 
 async def handle_menu_my_sources(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -441,13 +482,23 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 def register_handlers(application: Application) -> None:
     """Registra los handlers del bot en la aplicación."""
     logger.info("Registering Telegram handlers")
+    add_source_conversation = ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(handle_menu_add_source, pattern=f"^{MENU_ADD_SOURCE}$"),
+            CallbackQueryHandler(handle_quick_add, pattern="^quick_add$"),
+        ],
+        states={
+            WAITING_URL: [MessageHandler(filters.TEXT & ~filters.COMMAND, waiting_url_message)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel_add_source)],
+    )
+
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("addgroup", addgroup_command))
-    application.add_handler(CallbackQueryHandler(handle_menu_add_source, pattern=f"^{MENU_ADD_SOURCE}$"))
+    application.add_handler(add_source_conversation)
     application.add_handler(CallbackQueryHandler(handle_menu_my_sources, pattern=f"^{MENU_MY_SOURCES}$"))
     application.add_handler(CallbackQueryHandler(handle_menu_help, pattern=f"^{MENU_HELP}$"))
-    application.add_handler(CallbackQueryHandler(handle_quick_add, pattern="^quick_add$"))
     application.add_handler(CallbackQueryHandler(handle_tutorial, pattern="^tutorial$"))
     application.add_handler(CallbackQueryHandler(handle_remind_later, pattern="^remind_later$"))
     application.add_handler(CallbackQueryHandler(handle_generate_alert, pattern=r"^generate_alert_(\d+)$"))

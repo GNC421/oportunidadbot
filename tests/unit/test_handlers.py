@@ -150,6 +150,58 @@ async def test_handlers_callbacks(fake_update_context):
     assert len(replies) == 7
 
 
+@pytest.mark.asyncio
+async def test_handlers_menu_add_source_enters_waiting_url(fake_update_context):
+    handlers = _load_handlers_module()
+    update, context, replies = fake_update_context()
+
+    state = await handlers.handle_menu_add_source(update, context)
+
+    assert state == handlers.WAITING_URL
+    assert "Pega la URL" in replies[-1]["text"]
+    assert "/cancel" in replies[-1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_handlers_quick_add_enters_waiting_url(fake_update_context):
+    handlers = _load_handlers_module()
+    update, context, replies = fake_update_context()
+
+    state = await handlers.handle_quick_add(update, context)
+
+    assert state == handlers.WAITING_URL
+    assert "Pega la URL" in replies[-1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_handlers_waiting_url_message_reuses_addgroup_logic(fake_update_context, monkeypatch):
+    handlers = _load_handlers_module()
+    update, context, replies = fake_update_context()
+    update.message.text = "https://reddit.com/r/python"
+
+    monkeypatch.setattr(handlers, "_fetch_user_feeds", lambda _uid: [])
+    monkeypatch.setattr(handlers.rsshub_resolver, "resolve", lambda _url: "https://rsshub.local/reddit/r/python")
+    monkeypatch.setattr(handlers.feed_parser, "validate_feed_source", lambda _u: {"valid": True})
+    monkeypatch.setattr(handlers.database, "add_user", lambda *_a, **_k: True)
+    monkeypatch.setattr(handlers.database, "add_feed", lambda *_a, **_k: 77)
+
+    state = await handlers.waiting_url_message(update, context)
+
+    assert state == handlers.ConversationHandler.END
+    assert "Feed añadido correctamente" in replies[-1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_handlers_cancel_add_source(fake_update_context):
+    handlers = _load_handlers_module()
+    update, context, replies = fake_update_context()
+
+    state = await handlers.cancel_add_source(update, context)
+
+    assert state == handlers.ConversationHandler.END
+    assert "cancelada" in replies[-1]["text"].lower()
+
+
 def test_handlers_register_handlers():
     handlers = _load_handlers_module()
     added = []
