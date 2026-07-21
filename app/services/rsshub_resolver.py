@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Callable
-from urllib.parse import ParseResult, urlparse
+from urllib.parse import ParseResult, parse_qsl, urlencode, urlparse
 from loguru import logger
 
 try:
@@ -96,10 +96,14 @@ def _resolve_milanuncios(parsed_url: ParseResult) -> str | None:
 def _resolve_tablondeanuncios(parsed_url: ParseResult) -> str | None:
     """Transforma URLs de Tablon de Anuncios en una ruta RSSHub compatible."""
     logger.debug("Resolving Tablondeanuncios URL", path=parsed_url.path)
-    return _resolve_path_based(parsed_url, "tablondeanuncios")
+    return _resolve_path_based(parsed_url, "tablondeanuncios", allowed_query_params=("demanda",))
 
 
-def _resolve_path_based(parsed_url: ParseResult, prefix: str) -> str | None:
+def _resolve_path_based(
+    parsed_url: ParseResult,
+    prefix: str,
+    allowed_query_params: tuple[str, ...] = (),
+) -> str | None:
     """Construye una ruta RSSHub a partir de la ruta del sitio original."""
     logger.debug("Resolving path-based platform URL", platform=prefix, path=parsed_url.path)
     path = (parsed_url.path or "").strip("/")
@@ -109,6 +113,13 @@ def _resolve_path_based(parsed_url: ParseResult, prefix: str) -> str | None:
         return None
 
     route_path = "/".join(segments)
+
+    if allowed_query_params:
+        parsed_pairs = parse_qsl(parsed_url.query, keep_blank_values=False)
+        filtered_pairs = [(key, value) for key, value in parsed_pairs if key in allowed_query_params]
+        if filtered_pairs:
+            route_path = f"{route_path}?{urlencode(filtered_pairs)}"
+
     return _build_rsshub_url(f"{prefix}/{route_path}")
 
 
