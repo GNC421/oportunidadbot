@@ -79,6 +79,27 @@ def test_validate_feed_source_bozo(monkeypatch):
     assert result["valid"] is False
 
 
+def test_validate_feed_source_parse_none(monkeypatch):
+    monkeypatch.setattr(feed_parser, "_parse_feed_source", lambda _url: None)
+
+    result = feed_parser.validate_feed_source("https://rss.local/no-content")
+
+    assert result["valid"] is False
+    assert "No se pudo obtener" in result["error"]
+
+
+def test_validate_feed_source_handles_unexpected_exception(monkeypatch):
+    def _boom(_url):
+        raise RuntimeError("unexpected")
+
+    monkeypatch.setattr(feed_parser, "_parse_feed_source", _boom)
+
+    result = feed_parser.validate_feed_source("https://rss.local/fail")
+
+    assert result["valid"] is False
+    assert "Error inesperado" in result["error"]
+
+
 def test_validate_feed_source_valid(monkeypatch):
     fake = SimpleNamespace(bozo=False, entries=[{"title": "ok"}], feed={"title": "Demo"})
     monkeypatch.setattr(feed_parser, "_parse_feed_source", lambda _url: fake)
@@ -136,6 +157,18 @@ def test_parse_feed_handles_exception(monkeypatch):
     assert feed_parser.parse_feed("https://rss.local") is None
 
 
+def test_parse_feed_handles_exception_in_entry_mapping(monkeypatch):
+    class BrokenEntry:
+        def get(self, *_a, **_k):
+            raise RuntimeError("broken entry")
+
+    fake_feed = SimpleNamespace(bozo=False, entries=[BrokenEntry()], feed={"title": "demo"})
+    monkeypatch.setattr(feed_parser, "validate_feed_source", lambda _u: {"valid": True})
+    monkeypatch.setattr(feed_parser, "_parse_feed_source", lambda _u: fake_feed)
+
+    assert feed_parser.parse_feed("https://rss.local/broken") is None
+
+
 def test_detect_question_with_title_summary(monkeypatch):
     async def _ok(title, summary):
         return title == "Titulo" and summary == "Resumen"
@@ -149,6 +182,14 @@ def test_check_user_feeds_exception(monkeypatch):
     monkeypatch.setattr(feed_parser, "parse_feed", lambda _u: (_ for _ in ()).throw(RuntimeError("boom")))
 
     assert feed_parser.check_user_feeds({"id": 1, "user_id": 10, "url": "https://rss.local"}) == []
+
+
+def test_check_user_feeds_no_entries(monkeypatch):
+    monkeypatch.setattr(feed_parser, "parse_feed", lambda _u: [])
+
+    result = feed_parser.check_user_feeds({"id": 1, "user_id": 10, "url": "https://rss.local"})
+
+    assert result == []
 
 
 def _raise_async(*_a, **_k):

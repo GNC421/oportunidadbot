@@ -113,13 +113,16 @@ def fake_update_context() -> Any:
         async def reply_text(text: str, **kwargs: Any) -> None:
             replies.append({"text": text, "kwargs": kwargs})
 
+        async def edit_message_text(text: str, **kwargs: Any) -> None:
+            replies.append({"text": text, "kwargs": kwargs, "edited": True})
+
         message = SimpleNamespace(text="hello", reply_text=reply_text)
         user = SimpleNamespace(id=user_id, first_name=first_name, username=username)
 
         async def answer(*_a: Any, **_k: Any) -> None:
             return None
 
-        callback_query = SimpleNamespace(answer=answer, message=message)
+        callback_query = SimpleNamespace(answer=answer, edit_message_text=edit_message_text, message=message, data="")
         update = SimpleNamespace(effective_user=user, message=message, callback_query=callback_query)
         context = SimpleNamespace(args=args or [], matches=[])
         return update, context, replies

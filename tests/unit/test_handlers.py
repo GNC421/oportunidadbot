@@ -4,6 +4,7 @@ import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from datetime import datetime, timezone, timedelta
 
 import pytest
 
@@ -185,6 +186,32 @@ async def test_handlers_menu_my_sources_empty(fake_update_context, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_handlers_menu_my_sources_user_missing(fake_update_context):
+    handlers = _load_handlers_module()
+    update, context, replies = fake_update_context()
+    update.effective_user = None
+
+    await handlers.handle_menu_my_sources(update, context)
+
+    assert "No pude identificar" in replies[-1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_handlers_menu_my_sources_exception_path(fake_update_context, monkeypatch):
+    handlers = _load_handlers_module()
+    update, context, replies = fake_update_context()
+
+    def _boom(_uid):
+        raise RuntimeError("db fail")
+
+    monkeypatch.setattr(handlers, "_fetch_user_feeds", _boom)
+
+    await handlers.handle_menu_my_sources(update, context)
+
+    assert "No se pudieron cargar" in replies[-1]["text"]
+
+
+@pytest.mark.asyncio
 async def test_handlers_pause_and_resume(fake_update_context, monkeypatch):
     handlers = _load_handlers_module()
     update, context, replies = fake_update_context(args=["1"])
@@ -256,6 +283,50 @@ async def test_handlers_feed_pause_updates_status_and_edits_message(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_handlers_feed_pause_invalid_callback_data(fake_update_context):
+    handlers = _load_handlers_module()
+    update, context, replies = fake_update_context()
+    update.callback_query.data = "feed_pause_bad"
+
+    await handlers.handle_feed_pause_callback(update, context)
+
+    assert replies == []
+
+
+@pytest.mark.asyncio
+async def test_handlers_feed_pause_user_missing(fake_update_context):
+    handlers = _load_handlers_module()
+    update, context, replies, edits = _build_callback_update("feed_pause_42")
+    update.effective_user = None
+
+    await handlers.handle_feed_pause_callback(update, context)
+
+    assert len(replies) == 0
+    assert len(edits) == 0
+
+
+@pytest.mark.asyncio
+async def test_handlers_feed_pause_update_failure(monkeypatch):
+    handlers = _load_handlers_module()
+    update, context, replies, edits = _build_callback_update("feed_pause_42")
+    monkeypatch.setattr(
+        handlers,
+        "_find_user_feed",
+        lambda *_a: {"id": 42, "url": "https://reddit.com/r/murcia", "is_active": True},
+    )
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("db fail")
+
+    monkeypatch.setattr(handlers, "_update_user_feed_status", _boom)
+
+    await handlers.handle_feed_pause_callback(update, context)
+
+    assert len(replies) == 0
+    assert len(edits) == 0
+
+
+@pytest.mark.asyncio
 async def test_handlers_feed_resume_updates_status_and_edits_message(monkeypatch):
     handlers = _load_handlers_module()
     update, context, replies, edits = _build_callback_update("feed_resume_42")
@@ -303,6 +374,29 @@ async def test_handlers_feed_delete_request_shows_confirmation(monkeypatch):
     keyboard = edits[0]["kwargs"]["reply_markup"].inline_keyboard
     assert keyboard[0][0].callback_data == "feed_delete_confirm_42"
     assert keyboard[1][0].callback_data == "feed_delete_cancel_42"
+
+
+@pytest.mark.asyncio
+async def test_handlers_feed_delete_request_invalid_data(fake_update_context):
+    handlers = _load_handlers_module()
+    update, context, replies, edits = _build_callback_update("feed_delete_bad")
+
+    await handlers.handle_feed_delete_request(update, context)
+
+    assert len(replies) == 0
+    assert len(edits) == 0
+
+
+@pytest.mark.asyncio
+async def test_handlers_feed_delete_request_user_missing(fake_update_context):
+    handlers = _load_handlers_module()
+    update, context, replies, edits = _build_callback_update("feed_delete_42")
+    update.effective_user = None
+
+    await handlers.handle_feed_delete_request(update, context)
+
+    assert len(replies) == 0
+    assert len(edits) == 0
 
 
 @pytest.mark.asyncio
@@ -356,6 +450,62 @@ async def test_handlers_feed_delete_confirm_deletes_and_refreshes_remaining(monk
     assert "Fuente eliminada correctamente" in edits[0]["text"]
     assert "Fuentes restantes" in edits[0]["text"]
     assert "Reddit Alicante" in edits[0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_handlers_feed_delete_confirm_exception_path(monkeypatch):
+    handlers = _load_handlers_module()
+    update, context, replies, edits = _build_callback_update("feed_delete_confirm_42")
+    monkeypatch.setattr(
+        handlers,
+        "_find_user_feed",
+        lambda *_a: {"id": 42, "url": "https://reddit.com/r/murcia", "is_active": True},
+    )
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("db fail")
+
+    monkeypatch.setattr(handlers, "_delete_user_feed", _boom)
+
+    await handlers.handle_feed_delete_confirm(update, context)
+
+    assert len(replies) == 0
+    assert len(edits) == 0
+
+
+@pytest.mark.asyncio
+async def test_handlers_feed_delete_confirm_user_missing(fake_update_context):
+    handlers = _load_handlers_module()
+    update, context, replies, edits = _build_callback_update("feed_delete_confirm_42")
+    update.effective_user = None
+
+    await handlers.handle_feed_delete_confirm(update, context)
+
+    assert len(replies) == 0
+    assert len(edits) == 0
+
+
+@pytest.mark.asyncio
+async def test_handlers_feed_delete_confirm_invalid_data(fake_update_context):
+    handlers = _load_handlers_module()
+    update, context, replies, edits = _build_callback_update("feed_delete_confirm_bad")
+
+    await handlers.handle_feed_delete_confirm(update, context)
+
+    assert len(replies) == 0
+    assert len(edits) == 0
+
+
+@pytest.mark.asyncio
+async def test_handlers_feed_delete_confirm_not_found(monkeypatch):
+    handlers = _load_handlers_module()
+    update, context, replies, edits = _build_callback_update("feed_delete_confirm_42")
+    monkeypatch.setattr(handlers, "_find_user_feed", lambda *_a: None)
+
+    await handlers.handle_feed_delete_confirm(update, context)
+
+    assert len(replies) == 0
+    assert len(edits) == 0
 
 
 @pytest.mark.asyncio
@@ -435,6 +585,80 @@ def test_handlers_helper_functions():
     assert handlers._get_user_id(SimpleNamespace(effective_user=None)) is None
 
 
+def test_handlers_formatting_helpers():
+    handlers = _load_handlers_module()
+
+    assert handlers._normalize_feed_url("") == ""
+    assert handlers._feed_display_name("https://www.reddit.com/r/murcia") == "Reddit Murcia"
+    assert handlers._feed_display_name("https://example.com/path") == "example.com"
+    assert handlers._feed_display_name("notaurl") == "Fuente RSS"
+
+    assert handlers._parse_iso_datetime("") is None
+    assert handlers._parse_iso_datetime("bad-date") is None
+
+    naive = handlers._parse_iso_datetime("2026-07-21T10:00:00")
+    assert naive is not None and naive.tzinfo is timezone.utc
+
+    zoned = handlers._parse_iso_datetime("2026-07-21T10:00:00Z")
+    assert zoned is not None and zoned.tzinfo is timezone.utc
+
+    now = datetime.now(timezone.utc)
+    assert handlers._relative_last_check_text({}) == "Sin revisiones todavía"
+    assert handlers._relative_last_check_text({"last_check": (now - timedelta(seconds=10)).isoformat()}) == "Hace menos de un minuto"
+    assert handlers._relative_last_check_text({"last_check": (now - timedelta(minutes=5)).isoformat()}) == "Hace 5 minutos"
+    assert handlers._relative_last_check_text({"last_check": (now - timedelta(hours=2)).isoformat()}) == "Hace 2 horas"
+    assert handlers._relative_last_check_text({"last_check": (now - timedelta(days=3)).isoformat()}) == "Hace 3 días"
+
+    card_text_active, card_markup_active = handlers._build_feed_card({"id": 1, "url": "https://reddit.com/r/murcia", "is_active": True, "last_check": ""})
+    assert card_text_active.startswith("🟢 Reddit Murcia")
+    assert card_markup_active.inline_keyboard[0][0].callback_data == "feed_pause_1"
+
+    card_text_inactive, card_markup_inactive = handlers._build_feed_card({"id": 2, "url": "https://example.com/feed", "is_active": False, "last_check": ""})
+    assert card_text_inactive.startswith("⏸ example.com")
+    assert card_markup_inactive.inline_keyboard[0][0].callback_data == "feed_resume_2"
+
+    delete_text, delete_markup = handlers._build_delete_confirmation({"id": 3, "url": "https://reddit.com/r/alicante"})
+    assert "¿Seguro que deseas eliminar esta fuente" in delete_text
+    assert delete_markup.inline_keyboard[0][0].callback_data == "feed_delete_confirm_3"
+    assert delete_markup.inline_keyboard[1][0].callback_data == "feed_delete_cancel_3"
+
+    assert "No te quedan fuentes" in handlers._build_remaining_feeds_text([])
+    remaining = handlers._build_remaining_feeds_text([
+        {"id": 4, "url": "https://reddit.com/r/murcia", "is_active": True},
+        {"id": 5, "url": "https://reddit.com/r/alicante", "is_active": False},
+    ])
+    assert "📂 Fuentes restantes" in remaining
+    assert "🟢 Reddit Murcia" in remaining
+    assert "⏸ Reddit Alicante" in remaining
+
+    assert handlers._parse_feed_id_from_callback_data("feed_pause_22", "feed_pause_") == 22
+    assert handlers._parse_feed_id_from_callback_data("feed_pause_x", "feed_pause_") is None
+    assert handlers._parse_feed_id_from_callback_data("other_22", "feed_pause_") is None
+
+
+def test_handlers_database_helpers(fake_supabase, monkeypatch):
+    handlers = _load_handlers_module()
+    monkeypatch.setattr(handlers.database, "supabase", fake_supabase)
+
+    fake_supabase.seed(
+        "feeds",
+        [
+            {"id": 1, "user_id": 10, "url": "https://rss.local/one", "is_active": True},
+            {"id": 2, "user_id": 10, "url": "https://rss.local/two", "is_active": False},
+        ],
+    )
+
+    handlers._delete_user_feed(10, 1)
+    handlers._update_user_feed_status(10, 2, True)
+
+    found = handlers._find_user_feed(10, 2)
+
+    assert len(fake_supabase.feeds) == 1
+    assert fake_supabase.feeds[0]["id"] == 2
+    assert fake_supabase.feeds[0]["is_active"] is True
+    assert found is not None and found["id"] == 2
+
+
 @pytest.mark.asyncio
 async def test_handlers_addgroup_user_missing(fake_update_context):
     handlers = _load_handlers_module()
@@ -497,6 +721,131 @@ async def test_handlers_addgroup_db_save_fail(fake_update_context, monkeypatch):
     await handlers.addgroup_command(update, context)
 
     assert "No se pudo guardar" in replies[-1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_handlers_addgroup_exception_path(fake_update_context, monkeypatch):
+    handlers = _load_handlers_module()
+    update, context, replies = fake_update_context(args=["https://x.com"])
+    monkeypatch.setattr(handlers, "_fetch_user_feeds", lambda _u: [])
+    monkeypatch.setattr(handlers.rsshub_resolver, "resolve", lambda _u: "https://rsshub.local/x")
+    monkeypatch.setattr(handlers.feed_parser, "validate_feed_source", lambda _u: {"valid": True})
+    monkeypatch.setattr(handlers.database, "add_user", lambda *_a, **_k: True)
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("db fail")
+
+    monkeypatch.setattr(handlers.database, "add_feed", _boom)
+
+    await handlers.addgroup_command(update, context)
+
+    assert "No se pudo guardar" in replies[-1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_handlers_addgroup_empty_raw_url(fake_update_context):
+    handlers = _load_handlers_module()
+    update, context, replies = fake_update_context()
+
+    await handlers._addgroup_from_raw_url(update, "")
+
+    assert "no puede estar vacía" in replies[-1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_handlers_groups_exception_path(fake_update_context, monkeypatch):
+    handlers = _load_handlers_module()
+    update, context, replies = fake_update_context()
+
+    def _boom(_uid):
+        raise RuntimeError("db fail")
+
+    monkeypatch.setattr(handlers, "_fetch_user_feeds", _boom)
+
+    await handlers.groups_command(update, context)
+
+    assert "No se pudieron cargar" in replies[-1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_handlers_removegroup_user_missing(fake_update_context):
+    handlers = _load_handlers_module()
+    update, context, replies = fake_update_context(args=["1"])
+    update.effective_user = None
+
+    await handlers.removegroup_command(update, context)
+
+    assert "No pude identificar" in replies[-1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_handlers_removegroup_exception_path(fake_update_context, monkeypatch):
+    handlers = _load_handlers_module()
+    update, context, replies = fake_update_context(args=["1"])
+    monkeypatch.setattr(handlers, "_find_user_feed", lambda *_a: {"id": 1})
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("db fail")
+
+    monkeypatch.setattr(handlers, "_delete_user_feed", _boom)
+
+    await handlers.removegroup_command(update, context)
+
+    assert "No se pudo eliminar" in replies[-1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_handlers_pausegroup_user_missing(fake_update_context):
+    handlers = _load_handlers_module()
+    update, context, replies = fake_update_context(args=["1"])
+    update.effective_user = None
+
+    await handlers.pausegroup_command(update, context)
+
+    assert "No pude identificar" in replies[-1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_handlers_pausegroup_exception_path(fake_update_context, monkeypatch):
+    handlers = _load_handlers_module()
+    update, context, replies = fake_update_context(args=["1"])
+    monkeypatch.setattr(handlers, "_find_user_feed", lambda *_a: {"id": 1})
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("db fail")
+
+    monkeypatch.setattr(handlers, "_update_user_feed_status", _boom)
+
+    await handlers.pausegroup_command(update, context)
+
+    assert "No se pudo pausar" in replies[-1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_handlers_resumegroup_user_missing(fake_update_context):
+    handlers = _load_handlers_module()
+    update, context, replies = fake_update_context(args=["1"])
+    update.effective_user = None
+
+    await handlers.resumegroup_command(update, context)
+
+    assert "No pude identificar" in replies[-1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_handlers_resumegroup_exception_path(fake_update_context, monkeypatch):
+    handlers = _load_handlers_module()
+    update, context, replies = fake_update_context(args=["1"])
+    monkeypatch.setattr(handlers, "_find_user_feed", lambda *_a: {"id": 1})
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("db fail")
+
+    monkeypatch.setattr(handlers, "_update_user_feed_status", _boom)
+
+    await handlers.resumegroup_command(update, context)
+
+    assert "No se pudo reactivar" in replies[-1]["text"]
 
 
 @pytest.mark.asyncio

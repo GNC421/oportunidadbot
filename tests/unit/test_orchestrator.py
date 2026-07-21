@@ -101,6 +101,51 @@ async def test_orchestrator_skips_incomplete_feed(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_orchestrator_handle_alert_without_link(monkeypatch):
+    orchestrator = Orchestrator()
+    called = {"get_alert": 0, "save": 0, "mark": 0}
+
+    monkeypatch.setattr("app.services.orchestrator.get_alert_by_url", lambda _u: called.__setitem__("get_alert", 1))
+    monkeypatch.setattr("app.services.orchestrator.save_alert", lambda **_k: called.__setitem__("save", 1))
+    monkeypatch.setattr("app.services.orchestrator.mark_alert_sent", lambda _id: called.__setitem__("mark", 1))
+
+    async def _send_alert(**_kwargs):
+        raise AssertionError("send_alert should not be called when link is missing")
+
+    monkeypatch.setattr("app.services.orchestrator.send_alert", _send_alert)
+
+    await orchestrator._handle_alert(101, 1, {"title": "sin url", "summary": "x"})
+
+    assert called == {"get_alert": 0, "save": 0, "mark": 0}
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_get_active_feeds_exception(monkeypatch):
+    orchestrator = Orchestrator()
+
+    def _boom():
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr("app.services.orchestrator.get_active_feeds", _boom)
+
+    assert await orchestrator.run_feed_checks() == 0
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_no_opportunities_updates_last_check(monkeypatch, feed_factory):
+    orchestrator = Orchestrator()
+    feed = feed_factory(feed_id=55, user_id=101, url="https://rss.local/feed")
+    updated: list[int] = []
+
+    monkeypatch.setattr("app.services.orchestrator.get_active_feeds", lambda: [feed])
+    monkeypatch.setattr("app.services.orchestrator.check_user_feeds", lambda _f: [])
+    monkeypatch.setattr("app.services.orchestrator.update_feed_last_check", lambda feed_id: updated.append(feed_id))
+
+    assert await orchestrator.run_feed_checks() == 0
+    assert updated == [55]
+
+
+@pytest.mark.asyncio
 async def test_orchestrator_wrapper(monkeypatch):
     async def _run():
         return 7
