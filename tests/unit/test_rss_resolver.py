@@ -63,6 +63,14 @@ def test_resolve_tablondeanuncios(monkeypatch):
     assert resolved == "https://rsshub.local/tablondeanuncios/inmobiliaria/venta"
 
 
+def test_resolve_tablondeanuncios_keeps_demanda_query(monkeypatch):
+    monkeypatch.setattr(rsshub_resolver, "settings", SimpleNamespace(RSSHUB_BASE_URL="https://rsshub.local"))
+
+    resolved = rsshub_resolver.resolve("https://www.tablondeanuncios.com/inmobiliaria-en-murcia/?demanda=1")
+
+    assert resolved == "https://rsshub.local/tablondeanuncios/inmobiliaria-en-murcia?demanda=1"
+
+
 def test_resolve_rejects_non_string(monkeypatch):
     monkeypatch.setattr(rsshub_resolver, "settings", SimpleNamespace(RSSHUB_BASE_URL="https://rsshub.local"))
 
