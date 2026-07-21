@@ -108,6 +108,56 @@ async def test_handlers_groups_with_data(fake_update_context, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_handlers_menu_my_sources_dynamic_cards(fake_update_context, monkeypatch):
+    handlers = _load_handlers_module()
+    update, context, replies = fake_update_context()
+    monkeypatch.setattr(
+        handlers,
+        "_fetch_user_feeds",
+        lambda _uid: [
+            {
+                "id": 10,
+                "url": "https://reddit.com/r/murcia",
+                "is_active": True,
+                "last_check": "2026-07-21T10:00:00+00:00",
+            },
+            {
+                "id": 11,
+                "url": "https://reddit.com/r/alicante",
+                "is_active": False,
+                "last_check": "2026-07-21T10:00:00+00:00",
+            },
+        ],
+    )
+
+    await handlers.handle_menu_my_sources(update, context)
+
+    assert len(replies) == 2
+    assert replies[0]["text"].startswith("🟢 Reddit Murcia")
+    assert replies[1]["text"].startswith("⏸ Reddit Alicante")
+    assert "ID " not in replies[0]["text"]
+    assert "ID " not in replies[1]["text"]
+
+    first_buttons = replies[0]["kwargs"]["reply_markup"].inline_keyboard[0]
+    second_buttons = replies[1]["kwargs"]["reply_markup"].inline_keyboard[0]
+    assert first_buttons[0].callback_data == "feed_pause_10"
+    assert first_buttons[1].callback_data == "feed_delete_10"
+    assert second_buttons[0].callback_data == "feed_resume_11"
+    assert second_buttons[1].callback_data == "feed_delete_11"
+
+
+@pytest.mark.asyncio
+async def test_handlers_menu_my_sources_empty(fake_update_context, monkeypatch):
+    handlers = _load_handlers_module()
+    update, context, replies = fake_update_context()
+    monkeypatch.setattr(handlers, "_fetch_user_feeds", lambda _uid: [])
+
+    await handlers.handle_menu_my_sources(update, context)
+
+    assert "No tienes fuentes" in replies[-1]["text"]
+
+
+@pytest.mark.asyncio
 async def test_handlers_pause_and_resume(fake_update_context, monkeypatch):
     handlers = _load_handlers_module()
     update, context, replies = fake_update_context(args=["1"])
@@ -146,8 +196,9 @@ async def test_handlers_callbacks(fake_update_context):
     await handlers.handle_menu_help(update, context)
     context.matches = [SimpleNamespace(group=lambda _idx: "9")]
     await handlers.handle_generate_alert(update, context)
+    await handlers.handle_feed_action_placeholder(update, context)
 
-    assert len(replies) == 7
+    assert len(replies) == 8
 
 
 @pytest.mark.asyncio

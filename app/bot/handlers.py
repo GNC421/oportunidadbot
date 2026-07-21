@@ -1,4 +1,5 @@
 from typing import Any, Dict, Optional
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -111,6 +112,93 @@ def _normalize_feed_url(raw_url: str) -> str:
 def _fetch_user_feeds(user_id: int) -> list[Dict[str, Any]]:
     """Obtiene todos los feeds de un usuario desde la capa de persistencia."""
     return database.get_user_feeds(user_id)
+
+
+def _feed_display_name(feed_url: str) -> str:
+    """Construye un nombre legible para mostrar el feed al usuario."""
+    parsed = urlparse(feed_url)
+    netloc = (parsed.netloc or "").lower()
+    path_parts = [part for part in parsed.path.split("/") if part]
+
+    if "reddit.com" in netloc and len(path_parts) >= 2 and path_parts[0] == "r":
+        subreddit = path_parts[1].replace("-", " ").replace("_", " ").strip().title()
+        if subreddit:
+            return f"Reddit {subreddit}"
+
+    host = netloc.replace("www.", "")
+    if host:
+        return host
+    return "Fuente RSS"
+
+
+def _parse_iso_datetime(raw_value: Optional[str]) -> Optional[datetime]:
+    """Intenta parsear fechas ISO devolviendo datetime con zona horaria."""
+    if not raw_value:
+        return None
+
+    value = raw_value.strip()
+    if not value:
+        return None
+
+    if value.endswith("Z"):
+        value = value[:-1] + "+00:00"
+
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _relative_last_check_text(feed: Dict[str, Any]) -> str:
+    """Genera el texto de última revisión para el feed."""
+    last_check = _parse_iso_datetime(str(feed.get("last_check") or ""))
+    if not last_check:
+        return "Sin revisiones todavía"
+
+    now = datetime.now(timezone.utc)
+    delta_seconds = int((now - last_check).total_seconds())
+    if delta_seconds < 60:
+        return "Hace menos de un minuto"
+
+    minutes = delta_seconds // 60
+    if minutes < 60:
+        suffix = "minuto" if minutes == 1 else "minutos"
+        return f"Hace {minutes} {suffix}"
+
+    hours = minutes // 60
+    if hours < 24:
+        suffix = "hora" if hours == 1 else "horas"
+        return f"Hace {hours} {suffix}"
+
+    days = hours // 24
+    suffix = "día" if days == 1 else "días"
+    return f"Hace {days} {suffix}"
+
+
+def _build_feed_card(feed: Dict[str, Any]) -> tuple[str, InlineKeyboardMarkup]:
+    """Construye texto y botones para renderizar un feed como tarjeta."""
+    feed_id = feed.get("id")
+    feed_url = str(feed.get("url") or "")
+    is_active = bool(feed.get("is_active", True))
+    icon = "🟢" if is_active else "⏸"
+    name = _feed_display_name(feed_url)
+    last_check_text = _relative_last_check_text(feed)
+
+    card_text = f"{icon} {name}\n\nÚltima revisión:\n{last_check_text}"
+
+    if is_active:
+        primary_button = InlineKeyboardButton("⏸ Pausar", callback_data=f"feed_pause_{feed_id}")
+    else:
+        primary_button = InlineKeyboardButton("▶ Reanudar", callback_data=f"feed_resume_{feed_id}")
+
+    keyboard = InlineKeyboardMarkup(
+        [[primary_button, InlineKeyboardButton("🗑 Eliminar", callback_data=f"feed_delete_{feed_id}")]]
+    )
+    return card_text, keyboard
 
 
 def _delete_user_feed(user_id: int, feed_id: int) -> None:
@@ -459,8 +547,36 @@ async def handle_menu_my_sources(update: Update, context: ContextTypes.DEFAULT_T
     """Maneja la acción del menú principal para listar fuentes del usuario."""
     _log_command_entry("handle_menu_my_sources", update)
     query = update.callback_query
-    await query.answer("Función en preparación")
-    await query.message.reply_text("La opción Mis fuentes desde menú estará disponible pronto.")
+    await query.answer()
+
+    user_id = _get_user_id(update)
+    if not user_id:
+        await query.message.reply_text("No pude identificar tu usuario. Inténtalo de nuevo.")
+        return
+
+    try:
+        feeds = _fetch_user_feeds(user_id)
+        if not feeds:
+            await query.message.reply_text("No tienes fuentes registradas todavía. Usa ➕ Añadir fuente para empezar.")
+            return
+
+        for feed in feeds:
+            card_text, card_markup = _build_feed_card(feed)
+            await query.message.reply_text(card_text, reply_markup=card_markup)
+    except Exception:
+        logger.exception(
+            "Error al listar fuentes del menú para usuario {user_id}",
+            user_id=user_id,
+        )
+        await query.message.reply_text("No se pudieron cargar tus fuentes en este momento.")
+
+
+async def handle_feed_action_placeholder(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Placeholder temporal para acciones de tarjetas de fuentes."""
+    _log_command_entry("handle_feed_action_placeholder", update)
+    query = update.callback_query
+    await query.answer("Esta acción estará disponible pronto")
+    await query.message.reply_text("Esta acción aún no está implementada.")
 
 
 async def handle_menu_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -499,6 +615,7 @@ def register_handlers(application: Application) -> None:
     application.add_handler(add_source_conversation)
     application.add_handler(CallbackQueryHandler(handle_menu_my_sources, pattern=f"^{MENU_MY_SOURCES}$"))
     application.add_handler(CallbackQueryHandler(handle_menu_help, pattern=f"^{MENU_HELP}$"))
+    application.add_handler(CallbackQueryHandler(handle_feed_action_placeholder, pattern=r"^feed_(pause|resume|delete)_(\d+)$"))
     application.add_handler(CallbackQueryHandler(handle_tutorial, pattern="^tutorial$"))
     application.add_handler(CallbackQueryHandler(handle_remind_later, pattern="^remind_later$"))
     application.add_handler(CallbackQueryHandler(handle_generate_alert, pattern=r"^generate_alert_(\d+)$"))
