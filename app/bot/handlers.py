@@ -571,12 +571,79 @@ async def handle_menu_my_sources(update: Update, context: ContextTypes.DEFAULT_T
         await query.message.reply_text("No se pudieron cargar tus fuentes en este momento.")
 
 
-async def handle_feed_action_placeholder(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Placeholder temporal para acciones de tarjetas de fuentes."""
-    _log_command_entry("handle_feed_action_placeholder", update)
+def _parse_feed_id_from_callback_data(callback_data: str, prefix: str) -> Optional[int]:
+    """Extrae el id interno del feed desde el callback_data."""
+    if not callback_data.startswith(prefix):
+        return None
+    try:
+        return int(callback_data[len(prefix) :])
+    except ValueError:
+        return None
+
+
+async def _handle_feed_status_toggle(update: Update, is_active: bool, action_name: str, callback_prefix: str) -> None:
+    """Actualiza el estado del feed y refresca la tarjeta en el mismo mensaje."""
+    _log_command_entry(action_name, update)
+    query = update.callback_query
+    user_id = _get_user_id(update)
+    if not user_id:
+        await query.answer("No pude identificar tu usuario.", show_alert=True)
+        return
+
+    callback_data = query.data or ""
+    feed_id = _parse_feed_id_from_callback_data(callback_data, callback_prefix)
+    if feed_id is None:
+        await query.answer("No pude identificar la fuente.", show_alert=True)
+        return
+
+    try:
+        feed = _find_user_feed(user_id, feed_id)
+        if not feed:
+            await query.answer("No encontré esa fuente en tu cuenta.", show_alert=True)
+            return
+
+        _update_user_feed_status(user_id, feed_id, is_active)
+        updated_feed = dict(feed)
+        updated_feed["is_active"] = is_active
+        card_text, card_markup = _build_feed_card(updated_feed)
+
+        await query.edit_message_text(card_text, reply_markup=card_markup)
+        await query.answer("Estado actualizado")
+    except Exception:
+        logger.exception(
+            "Error al actualizar estado de feed desde callback",
+            user_id=user_id,
+            feed_id=feed_id,
+            is_active=is_active,
+        )
+        await query.answer("No se pudo actualizar el estado.", show_alert=True)
+
+
+async def handle_feed_pause_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Pausa un feed desde la tarjeta inline."""
+    await _handle_feed_status_toggle(
+        update=update,
+        is_active=False,
+        action_name="handle_feed_pause_callback",
+        callback_prefix="feed_pause_",
+    )
+
+
+async def handle_feed_resume_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Reanuda un feed desde la tarjeta inline."""
+    await _handle_feed_status_toggle(
+        update=update,
+        is_active=True,
+        action_name="handle_feed_resume_callback",
+        callback_prefix="feed_resume_",
+    )
+
+
+async def handle_feed_delete_placeholder(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Placeholder temporal para eliminar fuentes desde tarjeta."""
+    _log_command_entry("handle_feed_delete_placeholder", update)
     query = update.callback_query
     await query.answer("Esta acción estará disponible pronto")
-    await query.message.reply_text("Esta acción aún no está implementada.")
 
 
 async def handle_menu_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -615,7 +682,9 @@ def register_handlers(application: Application) -> None:
     application.add_handler(add_source_conversation)
     application.add_handler(CallbackQueryHandler(handle_menu_my_sources, pattern=f"^{MENU_MY_SOURCES}$"))
     application.add_handler(CallbackQueryHandler(handle_menu_help, pattern=f"^{MENU_HELP}$"))
-    application.add_handler(CallbackQueryHandler(handle_feed_action_placeholder, pattern=r"^feed_(pause|resume|delete)_(\d+)$"))
+    application.add_handler(CallbackQueryHandler(handle_feed_pause_callback, pattern=r"^feed_pause_(\d+)$"))
+    application.add_handler(CallbackQueryHandler(handle_feed_resume_callback, pattern=r"^feed_resume_(\d+)$"))
+    application.add_handler(CallbackQueryHandler(handle_feed_delete_placeholder, pattern=r"^feed_delete_(\d+)$"))
     application.add_handler(CallbackQueryHandler(handle_tutorial, pattern="^tutorial$"))
     application.add_handler(CallbackQueryHandler(handle_remind_later, pattern="^remind_later$"))
     application.add_handler(CallbackQueryHandler(handle_generate_alert, pattern=r"^generate_alert_(\d+)$"))

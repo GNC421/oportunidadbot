@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -14,6 +15,32 @@ def _load_handlers_module():
     assert spec and spec.loader
     spec.loader.exec_module(module)
     return module
+
+
+def _build_callback_update(callback_data: str, user_id: int = 101) -> tuple[Any, Any, list[dict[str, Any]], list[dict[str, Any]]]:
+    replies: list[dict[str, Any]] = []
+    edits: list[dict[str, Any]] = []
+
+    async def reply_text(text: str, **kwargs: Any) -> None:
+        replies.append({"text": text, "kwargs": kwargs})
+
+    async def answer(*_a: Any, **_k: Any) -> None:
+        return None
+
+    async def edit_message_text(text: str, **kwargs: Any) -> None:
+        edits.append({"text": text, "kwargs": kwargs})
+
+    message = SimpleNamespace(text="hello", reply_text=reply_text)
+    callback_query = SimpleNamespace(
+        data=callback_data,
+        answer=answer,
+        edit_message_text=edit_message_text,
+        message=message,
+    )
+    user = SimpleNamespace(id=user_id, username="tester")
+    update = SimpleNamespace(effective_user=user, message=message, callback_query=callback_query)
+    context = SimpleNamespace(args=[], matches=[])
+    return update, context, replies, edits
 
 
 @pytest.mark.asyncio
@@ -196,9 +223,65 @@ async def test_handlers_callbacks(fake_update_context):
     await handlers.handle_menu_help(update, context)
     context.matches = [SimpleNamespace(group=lambda _idx: "9")]
     await handlers.handle_generate_alert(update, context)
-    await handlers.handle_feed_action_placeholder(update, context)
+    await handlers.handle_feed_delete_placeholder(update, context)
 
-    assert len(replies) == 8
+    assert len(replies) == 7
+
+
+@pytest.mark.asyncio
+async def test_handlers_feed_pause_updates_status_and_edits_message(monkeypatch):
+    handlers = _load_handlers_module()
+    update, context, replies, edits = _build_callback_update("feed_pause_42")
+    monkeypatch.setattr(
+        handlers,
+        "_find_user_feed",
+        lambda *_a: {"id": 42, "url": "https://reddit.com/r/murcia", "is_active": True},
+    )
+
+    status_calls: list[tuple[int, int, bool]] = []
+    monkeypatch.setattr(
+        handlers,
+        "_update_user_feed_status",
+        lambda user_id, feed_id, is_active: status_calls.append((user_id, feed_id, is_active)),
+    )
+
+    await handlers.handle_feed_pause_callback(update, context)
+
+    assert status_calls == [(101, 42, False)]
+    assert len(replies) == 0
+    assert len(edits) == 1
+    assert edits[0]["text"].startswith("⏸ Reddit Murcia")
+    buttons = edits[0]["kwargs"]["reply_markup"].inline_keyboard[0]
+    assert buttons[0].callback_data == "feed_resume_42"
+    assert buttons[1].callback_data == "feed_delete_42"
+
+
+@pytest.mark.asyncio
+async def test_handlers_feed_resume_updates_status_and_edits_message(monkeypatch):
+    handlers = _load_handlers_module()
+    update, context, replies, edits = _build_callback_update("feed_resume_42")
+    monkeypatch.setattr(
+        handlers,
+        "_find_user_feed",
+        lambda *_a: {"id": 42, "url": "https://reddit.com/r/murcia", "is_active": False},
+    )
+
+    status_calls: list[tuple[int, int, bool]] = []
+    monkeypatch.setattr(
+        handlers,
+        "_update_user_feed_status",
+        lambda user_id, feed_id, is_active: status_calls.append((user_id, feed_id, is_active)),
+    )
+
+    await handlers.handle_feed_resume_callback(update, context)
+
+    assert status_calls == [(101, 42, True)]
+    assert len(replies) == 0
+    assert len(edits) == 1
+    assert edits[0]["text"].startswith("🟢 Reddit Murcia")
+    buttons = edits[0]["kwargs"]["reply_markup"].inline_keyboard[0]
+    assert buttons[0].callback_data == "feed_pause_42"
+    assert buttons[1].callback_data == "feed_delete_42"
 
 
 @pytest.mark.asyncio
