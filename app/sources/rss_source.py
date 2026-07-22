@@ -97,3 +97,7 @@ class RSSSource(BaseSource):
         except Exception as exc:
             self._source_logger().error("Error parsing RSS source", error=str(exc))
             return None
+
+
+class RSSFeedSource(RSSSource):
+    """Alias explícito para la fuente RSS base reutilizable por otros sources."""
