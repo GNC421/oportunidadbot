@@ -619,6 +619,10 @@ def test_handlers_formatting_helpers():
 
     assert handlers._normalize_feed_url("") == ""
     assert handlers._feed_display_name("https://www.reddit.com/r/murcia") == "Reddit Murcia"
+    assert (
+        handlers._feed_display_name("https://www.tablondeanuncios.com/inmobiliaria-en-murcia/?demanda=1")
+        == "🏠 Demanda inmobiliaria · Murcia"
+    )
     assert handlers._feed_display_name("https://example.com/path") == "example.com"
     assert handlers._feed_display_name("notaurl") == "Fuente RSS"
 

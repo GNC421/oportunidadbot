@@ -17,6 +17,7 @@ from loguru import logger
 from app import database
 from app.config import settings
 from app.services import feed_parser
+from app.services.source_display_name import SourceDisplayNameService
 from app.sources import SourceFactory
 
 MAX_FEEDS_PER_USER = getattr(settings, "MAX_FEEDS_PER_USER", 10)
@@ -117,19 +118,7 @@ def _fetch_user_feeds(user_id: int) -> list[Dict[str, Any]]:
 
 def _feed_display_name(feed_url: str) -> str:
     """Construye un nombre legible para mostrar el feed al usuario."""
-    parsed = urlparse(feed_url)
-    netloc = (parsed.netloc or "").lower()
-    path_parts = [part for part in parsed.path.split("/") if part]
-
-    if "reddit.com" in netloc and len(path_parts) >= 2 and path_parts[0] == "r":
-        subreddit = path_parts[1].replace("-", " ").replace("_", " ").strip().title()
-        if subreddit:
-            return f"Reddit {subreddit}"
-
-    host = netloc.replace("www.", "")
-    if host:
-        return host
-    return "Fuente RSS"
+    return SourceDisplayNameService.from_url(feed_url)
 
 
 def _parse_iso_datetime(raw_value: Optional[str]) -> Optional[datetime]:
