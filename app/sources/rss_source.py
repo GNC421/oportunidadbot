@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from typing import Any, Callable, Optional
 
-from loguru import logger
-
 from .base import BaseSource
 from .item import Item
 
@@ -15,8 +13,15 @@ class RSSSource(BaseSource):
         super().__init__(url)
         self._parse_feed_fn = parse_feed_fn
 
+    def _load_parsed_feed(self) -> Optional[Any]:
+        return self._parse_feed_fn(self.url)
+
+    @staticmethod
+    def _extract_entries(parsed_feed: Any) -> list[Any]:
+        return getattr(parsed_feed, "entries", []) or []
+
     def validate(self) -> dict[str, Any]:
-        parsed_feed = self._parse_feed_fn(self.url)
+        parsed_feed = self._load_parsed_feed()
         if parsed_feed is None:
             return {
                 "valid": False,
@@ -27,7 +32,10 @@ class RSSSource(BaseSource):
 
         if getattr(parsed_feed, "bozo", False):
             error_detail = getattr(parsed_feed, "bozo_exception", None)
-            logger.warning(f"El feed no pudo procesarse como RSS válido: {self.url} ({error_detail})")
+            self._source_logger().warning(
+                "Invalid RSS payload",
+                error_detail=str(error_detail),
+            )
             return {
                 "valid": False,
                 "error": "No se pudo procesar como un RSS válido",
@@ -35,9 +43,9 @@ class RSSSource(BaseSource):
                 "entry_count": 0,
             }
 
-        entries = getattr(parsed_feed, "entries", []) or []
+        entries = self._extract_entries(parsed_feed)
         if not entries:
-            logger.warning(f"El feed no tiene entradas: {self.url}")
+            self._source_logger().warning("RSS feed has no entries")
             return {
                 "valid": False,
                 "error": "El feed no tiene entradas disponibles",
@@ -50,7 +58,7 @@ class RSSSource(BaseSource):
         if isinstance(feed_data, dict):
             feed_title = feed_data.get("title", "") or ""
 
-        logger.info(f"Feed RSS válido: {self.url} ({len(entries)} entradas)")
+        self._source_logger().info("RSS source validated", entry_count=len(entries))
         return {
             "valid": True,
             "error": None,
@@ -59,18 +67,20 @@ class RSSSource(BaseSource):
         }
 
     def parse_items(self, limit: int = 10) -> Optional[list[Item]]:
-        validation = self.validate()
-        if not validation.get("valid", False):
-            logger.warning(f"No se parseará el feed inválido {self.url}: {validation.get('error')}")
-            return None
-
         try:
-            parsed_feed = self._parse_feed_fn(self.url)
+            parsed_feed = self._load_parsed_feed()
             if parsed_feed is None:
                 return None
 
+            if getattr(parsed_feed, "bozo", False):
+                return None
+
+            entries = self._extract_entries(parsed_feed)
+            if not entries:
+                return None
+
             items: list[Item] = []
-            for entry in parsed_feed.entries[:limit]:
+            for entry in entries[:limit]:
                 items.append(
                     Item(
                         title=entry.get("title", ""),
@@ -82,8 +92,8 @@ class RSSSource(BaseSource):
                     )
                 )
 
-            logger.info("Feed parsed successfully", url=self.url, parsed_entries=len(items))
+            self._source_logger().info("RSS source parsed successfully", parsed_entries=len(items))
             return items
         except Exception as exc:
-            logger.error(f"Error al parsear feed {self.url}: {exc}")
+            self._source_logger().error("Error parsing RSS source", error=str(exc))
             return None

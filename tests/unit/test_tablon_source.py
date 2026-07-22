@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 from app.sources.tablon_source import TablonSource
 
 
@@ -24,13 +22,7 @@ SAMPLE_HTML = """
 def test_tablon_source_validate_ok(monkeypatch):
     source = TablonSource("https://www.tablondeanuncios.com/inmobiliaria-en-murcia/?demanda=1")
 
-    monkeypatch.setattr(
-        "app.sources.tablon_source.httpx.get",
-        lambda *_a, **_k: SimpleNamespace(
-            text=SAMPLE_HTML,
-            raise_for_status=lambda: None,
-        ),
-    )
+    monkeypatch.setattr(source, "_request_text", lambda *_a, **_k: SAMPLE_HTML)
 
     result = source.validate()
 
@@ -41,13 +33,7 @@ def test_tablon_source_validate_ok(monkeypatch):
 def test_tablon_source_parse_items_maps_fields(monkeypatch):
     source = TablonSource("https://www.tablondeanuncios.com/inmobiliaria-en-murcia/?demanda=1")
 
-    monkeypatch.setattr(
-        "app.sources.tablon_source.httpx.get",
-        lambda *_a, **_k: SimpleNamespace(
-            text=SAMPLE_HTML,
-            raise_for_status=lambda: None,
-        ),
-    )
+    monkeypatch.setattr(source, "_request_text", lambda *_a, **_k: SAMPLE_HTML)
 
     items = source.parse_items(limit=10)
 
@@ -69,14 +55,28 @@ def test_tablon_source_parse_items_maps_fields(monkeypatch):
 def test_tablon_source_validate_error_when_no_articles(monkeypatch):
     source = TablonSource("https://www.tablondeanuncios.com/inmobiliaria-en-murcia/?demanda=1")
 
-    monkeypatch.setattr(
-        "app.sources.tablon_source.httpx.get",
-        lambda *_a, **_k: SimpleNamespace(
-            text="<html><body><div>sin resultados</div></body></html>",
-            raise_for_status=lambda: None,
-        ),
-    )
+    monkeypatch.setattr(source, "_request_text", lambda *_a, **_k: "<html><body><div>sin resultados</div></body></html>")
 
     result = source.validate()
 
     assert result["valid"] is False
+
+
+def test_tablon_source_detects_html_structure_fallback(monkeypatch):
+    source = TablonSource("https://www.tablondeanuncios.com/inmobiliaria-en-murcia/?demanda=1")
+    html_with_fallback_only = """
+    <html><body>
+      <article id=\"42\">
+        <a href=\"/anuncio.htm\">Anuncio fallback</a>
+        <p>texto</p>
+      </article>
+    </body></html>
+    """
+    monkeypatch.setattr(source, "_request_text", lambda *_a, **_k: html_with_fallback_only)
+
+    items = source.parse_items(limit=10)
+
+    assert items is not None
+    assert len(items) == 1
+    metrics = source.get_metrics()
+    assert metrics["html_structure_fallbacks"] >= 1

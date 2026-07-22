@@ -3,9 +3,7 @@ from __future__ import annotations
 from typing import Optional
 from urllib.parse import urljoin
 
-import httpx
 from bs4 import BeautifulSoup, Tag
-from loguru import logger
 
 from .base import BaseSource
 from .item import Item
@@ -15,18 +13,7 @@ class TablonSource(BaseSource):
     """Fuente HTML para listados de tablondeanuncios.com."""
 
     def _fetch_html(self) -> Optional[str]:
-        try:
-            response = httpx.get(
-                self.url,
-                headers={"User-Agent": "Mozilla/5.0 (compatible; OportunidadBot/1.0)"},
-                timeout=15.0,
-                follow_redirects=True,
-            )
-            response.raise_for_status()
-            return response.text
-        except Exception as exc:
-            logger.warning(f"No se pudo descargar HTML de Tablon: {self.url} ({exc})")
-            return None
+        return self._request_text(self.url)
 
     @staticmethod
     def _extract_text(root: Tag, selectors: tuple[str, ...]) -> str:
@@ -92,16 +79,30 @@ class TablonSource(BaseSource):
     def _extract_items_from_html(self, html: str, limit: int) -> list[Item]:
         soup = BeautifulSoup(html, "lxml")
         articles = soup.select("article.result-item")
+        used_fallback = False
         if not articles:
+            used_fallback = True
             articles = soup.select("article[id]")
 
+        if used_fallback and articles:
+            self._inc_metric("html_structure_fallbacks")
+            self._source_logger().warning(
+                "Primary selector missing, using fallback selector",
+                primary_selector="article.result-item",
+                fallback_selector="article[id]",
+                fallback_matches=len(articles),
+            )
+
         items: list[Item] = []
+        self._inc_metric("parse_runs")
         for article in articles:
             parsed = self._parse_article(article)
             if parsed is not None:
                 items.append(parsed)
             if len(items) >= limit:
                 break
+
+        self._inc_metric("items_extracted", len(items))
 
         return items
 
@@ -132,15 +133,19 @@ class TablonSource(BaseSource):
         }
 
     def parse_items(self, limit: int = 10) -> Optional[list[Item]]:
-        validation = self.validate()
-        if not validation.get("valid", False):
-            logger.warning(f"No se parseará la fuente inválida {self.url}: {validation.get('error')}")
-            return None
-
         html = self._fetch_html()
         if html is None:
+            self._source_logger().warning("Skipping parse because HTML could not be fetched")
             return None
 
         items = self._extract_items_from_html(html, limit=limit)
-        logger.info("Tablon source parsed successfully", url=self.url, parsed_entries=len(items))
+        if not items:
+            self._source_logger().warning("No items extracted from source")
+            return None
+
+        self._source_logger().info(
+            "Source parsed successfully",
+            parsed_entries=len(items),
+            metrics=self.get_metrics(),
+        )
         return items
