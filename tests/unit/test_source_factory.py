@@ -25,22 +25,25 @@ def test_source_factory_non_tablon_returns_rss_source():
     assert isinstance(source, RSSSource)
 
 
-def test_source_factory_registration_url_tablon_skips_rsshub():
-    def _boom(_url):
-        raise RuntimeError("rsshub should not be called")
-
+def test_source_factory_registration_url_tablon_kept_as_is():
     resolved = SourceFactory.resolve_registration_url(
         "https://tablondeanuncios.com/inmobiliaria/venta",
-        _boom,
     )
 
     assert resolved == "https://tablondeanuncios.com/inmobiliaria/venta"
 
 
-def test_source_factory_registration_url_non_tablon_uses_rsshub():
+def test_source_factory_registration_url_reddit_subreddit_to_native_rss():
     resolved = SourceFactory.resolve_registration_url(
         "https://reddit.com/r/python",
-        lambda _url: "https://rsshub.local/reddit/r/python",
     )
 
-    assert resolved == "https://rsshub.local/reddit/r/python"
+    assert resolved == "https://www.reddit.com/r/python/.rss"
+
+
+def test_source_factory_registration_url_reddit_user_to_native_rss():
+    resolved = SourceFactory.resolve_registration_url(
+        "https://reddit.com/user/guillermo",
+    )
+
+    assert resolved == "https://www.reddit.com/user/guillermo/.rss"

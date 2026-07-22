@@ -14,7 +14,7 @@ async def test_orchestrator_happy_path(monkeypatch, feed_factory, alert_factory)
     sent = []
 
     monkeypatch.setattr("app.services.orchestrator.get_active_feeds", lambda: [feed])
-    monkeypatch.setattr("app.services.orchestrator.check_user_feeds", lambda _f: [alert])
+    monkeypatch.setattr("app.services.orchestrator.check_user_source_entries", lambda _f: [alert])
     monkeypatch.setattr("app.services.orchestrator.get_alert_by_url", lambda _u: None)
     monkeypatch.setattr("app.services.orchestrator.save_alert", lambda **_k: 77)
     monkeypatch.setattr("app.services.orchestrator.mark_alert_sent", lambda alert_id: sent.append(alert_id))
@@ -46,7 +46,7 @@ async def test_orchestrator_duplicate(monkeypatch, feed_factory, alert_factory):
     alert = alert_factory(link="https://post/dup")
 
     monkeypatch.setattr("app.services.orchestrator.get_active_feeds", lambda: [feed])
-    monkeypatch.setattr("app.services.orchestrator.check_user_feeds", lambda _f: [alert])
+    monkeypatch.setattr("app.services.orchestrator.check_user_source_entries", lambda _f: [alert])
     monkeypatch.setattr("app.services.orchestrator.get_alert_by_url", lambda _u: {"id": 1})
     monkeypatch.setattr("app.services.orchestrator.update_feed_last_check", lambda _id: None)
 
@@ -66,7 +66,7 @@ async def test_orchestrator_parser_error(monkeypatch, feed_factory):
     def _raise(_feed):
         raise RuntimeError("parser fail")
 
-    monkeypatch.setattr("app.services.orchestrator.check_user_feeds", _raise)
+    monkeypatch.setattr("app.services.orchestrator.check_user_source_entries", _raise)
 
     assert await orchestrator.run_feed_checks() == 0
 
@@ -75,7 +75,7 @@ async def test_orchestrator_parser_error(monkeypatch, feed_factory):
 async def test_orchestrator_error_telegram(monkeypatch, feed_factory, alert_factory):
     orchestrator = Orchestrator()
     monkeypatch.setattr("app.services.orchestrator.get_active_feeds", lambda: [feed_factory()])
-    monkeypatch.setattr("app.services.orchestrator.check_user_feeds", lambda _f: [alert_factory(link="https://p/1")])
+    monkeypatch.setattr("app.services.orchestrator.check_user_source_entries", lambda _f: [alert_factory(link="https://p/1")])
     monkeypatch.setattr("app.services.orchestrator.get_alert_by_url", lambda _u: None)
     monkeypatch.setattr("app.services.orchestrator.save_alert", lambda **_k: 10)
     monkeypatch.setattr("app.services.orchestrator.update_feed_last_check", lambda _id: None)
@@ -138,7 +138,7 @@ async def test_orchestrator_no_opportunities_updates_last_check(monkeypatch, fee
     updated: list[int] = []
 
     monkeypatch.setattr("app.services.orchestrator.get_active_feeds", lambda: [feed])
-    monkeypatch.setattr("app.services.orchestrator.check_user_feeds", lambda _f: [])
+    monkeypatch.setattr("app.services.orchestrator.check_user_source_entries", lambda _f: [])
     monkeypatch.setattr("app.services.orchestrator.update_feed_last_check", lambda feed_id: updated.append(feed_id))
 
     assert await orchestrator.run_feed_checks() == 0

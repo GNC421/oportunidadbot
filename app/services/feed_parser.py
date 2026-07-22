@@ -20,7 +20,7 @@ def _parse_feed_source(url: str) -> Optional[Any]:
 
 
 def validate_feed_source(url: str) -> Dict[str, Any]:
-    """Valida si una URL apunta a un feed RSS usable y devuelve un resultado estructurado."""
+    """Valida si una URL apunta a una fuente usable y devuelve un resultado estructurado."""
     logger.debug("validate_feed_source called", url=url)
     if not url or not str(url).strip():
         logger.warning("Se recibió una URL de feed vacía")
@@ -32,13 +32,13 @@ def validate_feed_source(url: str) -> Dict[str, Any]:
         logger.warning(f"URL de feed inválida: {normalized_url}")
         return {"valid": False, "error": "La URL del feed no tiene un formato válido", "title": "", "entry_count": 0}
 
-    logger.info(f"Validando feed RSS: {normalized_url}")
+    logger.info(f"Validando fuente: {normalized_url}")
 
     try:
         source = SourceFactory.from_url(normalized_url, parse_feed_fn=_parse_feed_source)
         return source.validate()
     except Exception as exc:
-        logger.exception(f"Error inesperado validando feed RSS {normalized_url}: {exc}")
+        logger.exception(f"Error inesperado validando fuente {normalized_url}: {exc}")
         return {"valid": False, "error": "Error inesperado al validar el feed", "title": "", "entry_count": 0}
 
 
@@ -115,3 +115,8 @@ def check_user_feeds(feed: Dict) -> List[Dict]:
     except Exception as e:
         logger.error(f"❌ Error en check_user_feeds: {e}")
         return []
+
+
+def check_user_source_entries(feed: Dict) -> List[Dict]:
+    """Alias semántico para mantener el scheduler/orchestrator agnóstico al tipo de fuente."""
+    return check_user_feeds(feed)

@@ -18,7 +18,7 @@ async def test_orchestrator_database_integration(monkeypatch, fake_supabase):
     monkeypatch.setattr("app.services.orchestrator.mark_alert_sent", database.mark_alert_sent)
     monkeypatch.setattr("app.services.orchestrator.update_feed_last_check", lambda _id: None)
     monkeypatch.setattr(
-        "app.services.orchestrator.check_user_feeds",
+        "app.services.orchestrator.check_user_source_entries",
         lambda _feed: [{"title": "A", "summary": "B", "url": "https://post/1", "author": "u", "question": "q"}],
     )
 

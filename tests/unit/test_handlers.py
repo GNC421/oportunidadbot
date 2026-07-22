@@ -60,7 +60,7 @@ async def test_handlers_addgroup_invalid_url(fake_update_context, monkeypatch):
     handlers = _load_handlers_module()
     update, context, replies = fake_update_context(args=["notaurl"])
 
-    monkeypatch.setattr(handlers.rsshub_resolver, "resolve", lambda _u: None)
+    monkeypatch.setattr(handlers.SourceFactory, "resolve_registration_url", lambda _u: None)
 
     await handlers.addgroup_command(update, context)
 
@@ -73,7 +73,7 @@ async def test_handlers_addgroup_happy_path(fake_update_context, monkeypatch):
     update, context, replies = fake_update_context(args=["https://reddit.com/r/python"])
 
     monkeypatch.setattr(handlers, "_fetch_user_feeds", lambda _uid: [])
-    monkeypatch.setattr(handlers.rsshub_resolver, "resolve", lambda _url: "https://rsshub.local/reddit/r/python")
+    monkeypatch.setattr(handlers.SourceFactory, "resolve_registration_url", lambda _url: "https://feed.local/reddit/r/python")
     monkeypatch.setattr(handlers.feed_parser, "validate_feed_source", lambda _u: {"valid": True})
 
     calls = {"add_user": 0, "add_feed": 0}
@@ -86,17 +86,18 @@ async def test_handlers_addgroup_happy_path(fake_update_context, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_handlers_addgroup_tablon_uses_source_url_without_rsshub(fake_update_context, monkeypatch):
+async def test_handlers_addgroup_tablon_uses_source_url_directly(fake_update_context, monkeypatch):
     handlers = _load_handlers_module()
     update, context, replies = fake_update_context(args=["https://www.tablondeanuncios.com/inmobiliaria-en-murcia/?demanda=1"])
 
     monkeypatch.setattr(handlers, "_fetch_user_feeds", lambda _uid: [])
     monkeypatch.setattr(handlers.feed_parser, "validate_feed_source", lambda _u: {"valid": True})
 
-    def _boom(_url):
-        raise RuntimeError("rsshub should not be called for tablondeanuncios")
-
-    monkeypatch.setattr(handlers.rsshub_resolver, "resolve", _boom)
+    monkeypatch.setattr(
+        handlers.SourceFactory,
+        "resolve_registration_url",
+        lambda _url: "https://www.tablondeanuncios.com/inmobiliaria-en-murcia/?demanda=1",
+    )
 
     captured: dict[str, str] = {}
     monkeypatch.setattr(handlers.database, "add_user", lambda *_a, **_k: True)
@@ -566,7 +567,7 @@ async def test_handlers_waiting_url_message_reuses_addgroup_logic(fake_update_co
     update.message.text = "https://reddit.com/r/python"
 
     monkeypatch.setattr(handlers, "_fetch_user_feeds", lambda _uid: [])
-    monkeypatch.setattr(handlers.rsshub_resolver, "resolve", lambda _url: "https://rsshub.local/reddit/r/python")
+    monkeypatch.setattr(handlers.SourceFactory, "resolve_registration_url", lambda _url: "https://feed.local/reddit/r/python")
     monkeypatch.setattr(handlers.feed_parser, "validate_feed_source", lambda _u: {"valid": True})
     monkeypatch.setattr(handlers.database, "add_user", lambda *_a, **_k: True)
     monkeypatch.setattr(handlers.database, "add_feed", lambda *_a, **_k: 77)
@@ -702,8 +703,8 @@ async def test_handlers_addgroup_user_missing(fake_update_context):
 async def test_handlers_addgroup_duplicate(fake_update_context, monkeypatch):
     handlers = _load_handlers_module()
     update, context, replies = fake_update_context(args=["https://x.com"])
-    monkeypatch.setattr(handlers.rsshub_resolver, "resolve", lambda _u: "https://rsshub.local/x")
-    monkeypatch.setattr(handlers, "_fetch_user_feeds", lambda _u: [{"id": 1, "url": "https://rsshub.local/x"}])
+    monkeypatch.setattr(handlers.SourceFactory, "resolve_registration_url", lambda _u: "https://feed.local/x")
+    monkeypatch.setattr(handlers, "_fetch_user_feeds", lambda _u: [{"id": 1, "url": "https://feed.local/x"}])
 
     await handlers.addgroup_command(update, context)
 
@@ -715,8 +716,8 @@ async def test_handlers_addgroup_limit_reached(fake_update_context, monkeypatch)
     handlers = _load_handlers_module()
     update, context, replies = fake_update_context(args=["https://x.com"])
     monkeypatch.setattr(handlers, "MAX_FEEDS_PER_USER", 1)
-    monkeypatch.setattr(handlers.rsshub_resolver, "resolve", lambda _u: "https://rsshub.local/x")
-    monkeypatch.setattr(handlers, "_fetch_user_feeds", lambda _u: [{"id": 1, "url": "https://rsshub.local/other"}])
+    monkeypatch.setattr(handlers.SourceFactory, "resolve_registration_url", lambda _u: "https://feed.local/x")
+    monkeypatch.setattr(handlers, "_fetch_user_feeds", lambda _u: [{"id": 1, "url": "https://feed.local/other"}])
 
     await handlers.addgroup_command(update, context)
 
@@ -728,7 +729,7 @@ async def test_handlers_addgroup_invalid_feed(fake_update_context, monkeypatch):
     handlers = _load_handlers_module()
     update, context, replies = fake_update_context(args=["https://x.com"])
     monkeypatch.setattr(handlers, "_fetch_user_feeds", lambda _u: [])
-    monkeypatch.setattr(handlers.rsshub_resolver, "resolve", lambda _u: "https://rsshub.local/x")
+    monkeypatch.setattr(handlers.SourceFactory, "resolve_registration_url", lambda _u: "https://feed.local/x")
     monkeypatch.setattr(handlers.feed_parser, "validate_feed_source", lambda _u: {"valid": False, "error": "bad rss"})
 
     await handlers.addgroup_command(update, context)
@@ -741,7 +742,7 @@ async def test_handlers_addgroup_db_save_fail(fake_update_context, monkeypatch):
     handlers = _load_handlers_module()
     update, context, replies = fake_update_context(args=["https://x.com"])
     monkeypatch.setattr(handlers, "_fetch_user_feeds", lambda _u: [])
-    monkeypatch.setattr(handlers.rsshub_resolver, "resolve", lambda _u: "https://rsshub.local/x")
+    monkeypatch.setattr(handlers.SourceFactory, "resolve_registration_url", lambda _u: "https://feed.local/x")
     monkeypatch.setattr(handlers.feed_parser, "validate_feed_source", lambda _u: {"valid": True})
     monkeypatch.setattr(handlers.database, "add_user", lambda *_a, **_k: True)
     monkeypatch.setattr(handlers.database, "add_feed", lambda *_a, **_k: None)
@@ -756,7 +757,7 @@ async def test_handlers_addgroup_exception_path(fake_update_context, monkeypatch
     handlers = _load_handlers_module()
     update, context, replies = fake_update_context(args=["https://x.com"])
     monkeypatch.setattr(handlers, "_fetch_user_feeds", lambda _u: [])
-    monkeypatch.setattr(handlers.rsshub_resolver, "resolve", lambda _u: "https://rsshub.local/x")
+    monkeypatch.setattr(handlers.SourceFactory, "resolve_registration_url", lambda _u: "https://feed.local/x")
     monkeypatch.setattr(handlers.feed_parser, "validate_feed_source", lambda _u: {"valid": True})
     monkeypatch.setattr(handlers.database, "add_user", lambda *_a, **_k: True)
 

@@ -27,7 +27,7 @@ def start_scheduler():
     scheduler.start()
 
     logger.info("Scheduler iniciado")
-    logger.info("Comprobación automática cada 15 minutos")
+    logger.info("Comprobación automática de fuentes cada 15 minutos")
 
 
 def stop_scheduler():

@@ -20,7 +20,7 @@ async def test_duplicate_pipeline_skips_telegram(monkeypatch, fake_supabase):
     monkeypatch.setattr("app.services.orchestrator.save_alert", database.save_alert)
     monkeypatch.setattr("app.services.orchestrator.update_feed_last_check", lambda _id: None)
     monkeypatch.setattr(
-        "app.services.orchestrator.check_user_feeds",
+        "app.services.orchestrator.check_user_source_entries",
         lambda _feed: [{"title": "A", "summary": "B", "url": "https://post/dup", "author": "u", "question": "q"}],
     )
 

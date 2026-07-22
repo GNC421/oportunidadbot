@@ -16,7 +16,7 @@ from loguru import logger
 
 from app import database
 from app.config import settings
-from app.services import feed_parser, rsshub_resolver
+from app.services import feed_parser
 from app.sources import SourceFactory
 
 MAX_FEEDS_PER_USER = getattr(settings, "MAX_FEEDS_PER_USER", 10)
@@ -280,10 +280,10 @@ async def _addgroup_from_raw_url(update: Update, raw_url: str) -> None:
         await update.message.reply_text("La URL no tiene un formato válido. Prueba con una dirección completa como https://ejemplo.com/feed")
         return
 
-    resolved_feed_url = SourceFactory.resolve_registration_url(normalized_url, rsshub_resolver.resolve)
+    resolved_feed_url = SourceFactory.resolve_registration_url(normalized_url)
     if resolved_feed_url is None:
-        logger.warning("No se pudo resolver una URL RSSHub para: {}", normalized_url)
-        await update.message.reply_text("La plataforma aún no está soportada para convertirla a RSS automáticamente.")
+        logger.warning("No se pudo resolver una URL de fuente para: {}", normalized_url)
+        await update.message.reply_text("La plataforma aún no está soportada para registrarla automáticamente.")
         return
 
     logger.info("URL resolved for source registration", original_url=normalized_url, resolved_feed_url=resolved_feed_url)
@@ -311,7 +311,7 @@ async def _addgroup_from_raw_url(update: Update, raw_url: str) -> None:
         if not validation.get("valid", False):
             logger.warning("El feed no pudo validarse: {} - {}", resolved_feed_url, validation.get("error"))
             await update.message.reply_text(
-                "No pude validar ese RSS. " + (validation.get("error") or "Comprueba que la URL sea un feed válido y accesible.")
+                "No pude validar esa fuente. " + (validation.get("error") or "Comprueba que la URL sea válida y accesible.")
             )
             return
 
