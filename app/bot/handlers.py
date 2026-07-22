@@ -17,6 +17,7 @@ from loguru import logger
 from app import database
 from app.config import settings
 from app.services import feed_parser, rsshub_resolver
+from app.sources import SourceFactory
 
 MAX_FEEDS_PER_USER = getattr(settings, "MAX_FEEDS_PER_USER", 10)
 
@@ -279,13 +280,13 @@ async def _addgroup_from_raw_url(update: Update, raw_url: str) -> None:
         await update.message.reply_text("La URL no tiene un formato válido. Prueba con una dirección completa como https://ejemplo.com/feed")
         return
 
-    resolved_feed_url = rsshub_resolver.resolve(normalized_url)
+    resolved_feed_url = SourceFactory.resolve_registration_url(normalized_url, rsshub_resolver.resolve)
     if resolved_feed_url is None:
         logger.warning("No se pudo resolver una URL RSSHub para: {}", normalized_url)
         await update.message.reply_text("La plataforma aún no está soportada para convertirla a RSS automáticamente.")
         return
 
-    logger.info("URL resolved to RSSHub", original_url=normalized_url, resolved_feed_url=resolved_feed_url)
+    logger.info("URL resolved for source registration", original_url=normalized_url, resolved_feed_url=resolved_feed_url)
 
     try:
         existing_feeds = _fetch_user_feeds(user_id)

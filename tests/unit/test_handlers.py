@@ -86,6 +86,34 @@ async def test_handlers_addgroup_happy_path(fake_update_context, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_handlers_addgroup_tablon_uses_source_url_without_rsshub(fake_update_context, monkeypatch):
+    handlers = _load_handlers_module()
+    update, context, replies = fake_update_context(args=["https://www.tablondeanuncios.com/inmobiliaria-en-murcia/?demanda=1"])
+
+    monkeypatch.setattr(handlers, "_fetch_user_feeds", lambda _uid: [])
+    monkeypatch.setattr(handlers.feed_parser, "validate_feed_source", lambda _u: {"valid": True})
+
+    def _boom(_url):
+        raise RuntimeError("rsshub should not be called for tablondeanuncios")
+
+    monkeypatch.setattr(handlers.rsshub_resolver, "resolve", _boom)
+
+    captured: dict[str, str] = {}
+    monkeypatch.setattr(handlers.database, "add_user", lambda *_a, **_k: True)
+
+    def _add_feed(*_a, **kwargs):
+        captured["url"] = kwargs["url"]
+        return 101
+
+    monkeypatch.setattr(handlers.database, "add_feed", _add_feed)
+
+    await handlers.addgroup_command(update, context)
+
+    assert captured["url"] == "https://www.tablondeanuncios.com/inmobiliaria-en-murcia/?demanda=1"
+    assert "Feed añadido correctamente" in replies[-1]["text"]
+
+
+@pytest.mark.asyncio
 async def test_handlers_groups_no_feeds(fake_update_context, monkeypatch):
     handlers = _load_handlers_module()
     update, context, replies = fake_update_context()
