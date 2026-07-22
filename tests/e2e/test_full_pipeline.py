@@ -17,7 +17,7 @@ async def test_full_pipeline_positive(monkeypatch, fake_supabase):
     monkeypatch.setattr("app.services.orchestrator.mark_alert_sent", database.mark_alert_sent)
     monkeypatch.setattr("app.services.orchestrator.update_feed_last_check", lambda _id: None)
     monkeypatch.setattr(
-        "app.services.orchestrator.check_user_feeds",
+        "app.services.orchestrator.check_user_source_entries",
         lambda _feed: [{"title": "Busco", "summary": "inversión", "url": "https://post/ok", "author": "u", "question": "q"}],
     )
 
@@ -43,7 +43,7 @@ async def test_full_pipeline_empty_rss_no_alerts(monkeypatch, fake_supabase):
     fake_supabase.seed("feeds", [{"id": 1, "user_id": 101, "url": "https://rss.local/1", "is_active": True}])
 
     monkeypatch.setattr("app.services.orchestrator.get_active_feeds", database.get_active_feeds)
-    monkeypatch.setattr("app.services.orchestrator.check_user_feeds", lambda _feed: [])
+    monkeypatch.setattr("app.services.orchestrator.check_user_source_entries", lambda _feed: [])
     monkeypatch.setattr("app.services.orchestrator.update_feed_last_check", lambda _id: None)
 
     orchestrator = Orchestrator()

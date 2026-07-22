@@ -31,7 +31,7 @@ async def test_multi_feed_pipeline_one_fail_others_continue(monkeypatch, fake_su
             return [{"title": "T3", "summary": "S3", "url": "https://post/3", "author": "u", "question": "q"}]
         return [{"title": "T1", "summary": "S1", "url": "https://post/1", "author": "u", "question": "q"}]
 
-    monkeypatch.setattr("app.services.orchestrator.check_user_feeds", _check)
+    monkeypatch.setattr("app.services.orchestrator.check_user_source_entries", _check)
 
     sent: list[dict] = []
 

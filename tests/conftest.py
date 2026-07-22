@@ -8,7 +8,6 @@ from typing import Any
 import pytest
 
 from tests.mocks.fake_nvidia import FakeNvidia
-from tests.mocks.fake_rsshub import FakeRSSHub
 from tests.mocks.fake_scheduler import FakeScheduler
 from tests.mocks.fake_supabase import FakeSupabase
 from tests.mocks.fake_telegram import FakeTelegram
@@ -21,7 +20,6 @@ os.environ.setdefault("NVIDIA_API_KEY", "nvidia-test-key")
 os.environ.setdefault("NVIDIA_BASE_URL", "https://nvidia.local/v1")
 os.environ.setdefault("NVIDIA_MODEL", "test-model")
 os.environ.setdefault("AI_ENABLED", "true")
-os.environ.setdefault("RSSHUB_BASE_URL", "https://rsshub.local")
 
 pytest_plugins = [
     "tests.fixtures.users",
@@ -65,11 +63,6 @@ def fake_telegram() -> FakeTelegram:
 @pytest.fixture
 def fake_nvidia() -> FakeNvidia:
     return FakeNvidia()
-
-
-@pytest.fixture
-def fake_rsshub() -> FakeRSSHub:
-    return FakeRSSHub()
 
 
 @pytest.fixture

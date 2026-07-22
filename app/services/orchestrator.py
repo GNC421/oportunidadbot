@@ -9,13 +9,13 @@ from app.database import (
     update_feed_last_check,
 )
 from app.services.alert_service import send_alert
-from app.services.feed_parser import check_user_feeds
+from app.services.feed_parser import check_user_source_entries
 
 logger = logging.getLogger(__name__)
 
 
 class Orchestrator:
-    """Coordina el flujo RSS -> parser -> alerta."""
+    """Coordina el flujo source -> parser -> alerta."""
 
     def _build_alert_payload(self, alert: Dict) -> Dict:
         """Normaliza la salida del parser a un formato compatible con el resto del sistema."""
@@ -88,7 +88,7 @@ class Orchestrator:
                     continue
 
                 logger.info(f"Procesando feed {url}")
-                opportunities = check_user_feeds(feed)
+                opportunities = check_user_source_entries(feed)
 
                 if not opportunities:
                     logger.info(f"No hay novedades para {url}")

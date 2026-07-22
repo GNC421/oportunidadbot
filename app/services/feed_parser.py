@@ -7,6 +7,7 @@ from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.services.ai_classifier import classifier
+from app.sources import SourceFactory
 
 def _parse_feed_source(url: str) -> Optional[Any]:
     """Obtiene el objeto parseado por feedparser para una URL dada."""
@@ -19,7 +20,7 @@ def _parse_feed_source(url: str) -> Optional[Any]:
 
 
 def validate_feed_source(url: str) -> Dict[str, Any]:
-    """Valida si una URL apunta a un feed RSS usable y devuelve un resultado estructurado."""
+    """Valida si una URL apunta a una fuente usable y devuelve un resultado estructurado."""
     logger.debug("validate_feed_source called", url=url)
     if not url or not str(url).strip():
         logger.warning("Se recibió una URL de feed vacía")
@@ -31,37 +32,13 @@ def validate_feed_source(url: str) -> Dict[str, Any]:
         logger.warning(f"URL de feed inválida: {normalized_url}")
         return {"valid": False, "error": "La URL del feed no tiene un formato válido", "title": "", "entry_count": 0}
 
-    logger.info(f"Validando feed RSS: {normalized_url}")
+    logger.info(f"Validando fuente: {normalized_url}")
 
     try:
-        parsed_feed = _parse_feed_source(normalized_url)
-        if parsed_feed is None:
-            return {"valid": False, "error": "No se pudo obtener el contenido del feed", "title": "", "entry_count": 0}
-
-        if getattr(parsed_feed, "bozo", False):
-            error_detail = getattr(parsed_feed, "bozo_exception", None)
-            logger.warning(f"El feed no pudo procesarse como RSS válido: {normalized_url} ({error_detail})")
-            return {"valid": False, "error": "No se pudo procesar como un RSS válido", "title": "", "entry_count": 0}
-
-        entries = getattr(parsed_feed, "entries", []) or []
-        if not entries:
-            logger.warning(f"El feed no tiene entradas: {normalized_url}")
-            return {"valid": False, "error": "El feed no tiene entradas disponibles", "title": "", "entry_count": 0}
-
-        feed_title = ""
-        feed_data = getattr(parsed_feed, "feed", {}) or {}
-        if isinstance(feed_data, dict):
-            feed_title = feed_data.get("title", "") or ""
-
-        logger.info(f"Feed RSS válido: {normalized_url} ({len(entries)} entradas)")
-        return {
-            "valid": True,
-            "error": None,
-            "title": feed_title,
-            "entry_count": len(entries),
-        }
+        source = SourceFactory.from_url(normalized_url, parse_feed_fn=_parse_feed_source)
+        return source.validate()
     except Exception as exc:
-        logger.exception(f"Error inesperado validando feed RSS {normalized_url}: {exc}")
+        logger.exception(f"Error inesperado validando fuente {normalized_url}: {exc}")
         return {"valid": False, "error": "Error inesperado al validar el feed", "title": "", "entry_count": 0}
 
 
@@ -69,30 +46,13 @@ def validate_feed_source(url: str) -> Dict[str, Any]:
 def parse_feed(url: str) -> Optional[List[Dict]]:
     """Parsea un feed RSS y devuelve las entradas."""
     logger.debug("parse_feed called", url=url)
-    validation = validate_feed_source(url)
-    if not validation.get("valid", False):
-        logger.warning(f"No se parseará el feed inválido {url}: {validation.get('error')}")
-        return None
-
     try:
-        feed = _parse_feed_source(url)
-        if feed is None:
+        source = SourceFactory.from_url(url, parse_feed_fn=_parse_feed_source)
+        items = source.parse_items(limit=10)
+        if items is None:
             return None
 
-        entries = []
-        for entry in feed.entries[:10]:
-            entry_data = {
-                'title': entry.get('title', ''),
-                'summary': entry.get('summary', ''),
-                'link': entry.get('link', ''),
-                'author': entry.get('author', ''),
-                'published': entry.get('published', ''),
-                'published_parsed': entry.get('published_parsed')
-            }
-            entries.append(entry_data)
-
-        logger.info("Feed parsed successfully", url=url, parsed_entries=len(entries))
-        return entries
+        return [item.to_dict() for item in items]
     except Exception as exc:
         logger.error(f"Error al parsear feed {url}: {exc}")
         return None
@@ -155,3 +115,8 @@ def check_user_feeds(feed: Dict) -> List[Dict]:
     except Exception as e:
         logger.error(f"❌ Error en check_user_feeds: {e}")
         return []
+
+
+def check_user_source_entries(feed: Dict) -> List[Dict]:
+    """Alias semántico para mantener el scheduler/orchestrator agnóstico al tipo de fuente."""
+    return check_user_feeds(feed)

@@ -39,9 +39,6 @@ class Settings(BaseSettings):
     NVIDIA_MODEL: Optional[str] = Field(None, description="Modelo de lenguaje de NVIDIA")
     AI_ENABLED: bool = Field(False, description="Habilitar el uso de la IA para clasificación de oportunidades")
 
-    # RSSHub
-    RSSHUB_BASE_URL: Optional[str] = Field(None, description="URL base de RSSHub para resolver fuentes soportadas")
-
     # Logging
     LOG_LEVEL: str = Field("INFO", description="Nivel de logging")
     
