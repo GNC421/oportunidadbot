@@ -1,5 +1,6 @@
 from typing import Any, Dict, Optional
 from datetime import datetime, timezone
+from decimal import Decimal
 from urllib.parse import urlparse
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -15,12 +16,10 @@ from telegram.ext import (
 from loguru import logger
 
 from app import database
-from app.config import settings
+from app.subscriptions import get_subscription_catalog
 from app.services import feed_parser
 from app.services.source_display_name import SourceDisplayNameService
 from app.sources import SourceFactory
-
-MAX_FEEDS_PER_USER = getattr(settings, "MAX_FEEDS_PER_USER", 10)
 
 MENU_ADD_SOURCE = "menu_add_source"
 MENU_MY_SOURCES = "menu_my_sources"
@@ -84,12 +83,35 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 def _get_help_text() -> str:
     """Texto de ayuda con los comandos actualmente soportados."""
+    plans_text = _get_subscription_plans_text()
     return (
         "📋 **Lista de comandos disponibles:**\n\n"
         "/start - Mostrar menú principal\n"
         "/help - Mostrar esta ayuda\n"
-        "/addgroup [URL] - Añadir un feed a partir de una URL soportada"
+        "/addgroup [URL] - Añadir un feed a partir de una URL soportada\n\n"
+        "💳 **Planes**\n"
+        f"{plans_text}"
     )
+
+
+def _format_plan_price(value: Decimal) -> str:
+    """Da formato consistente a precios de planes con dos decimales."""
+    return f"{value:.2f}"
+
+
+def _get_subscription_plans_text() -> str:
+    """Construye el bloque de planes usando exclusivamente SubscriptionCatalog."""
+    catalog = get_subscription_catalog()
+    lines: list[str] = []
+
+    for plan in catalog.list_plans():
+        limit_label = "Ilimitadas" if plan.source_limit is None else str(plan.source_limit)
+        lines.append(f"- {plan.name}: {_format_plan_price(plan.price)} {plan.currency}/mes")
+        lines.append(f"  Fuentes: {limit_label}")
+        for feature in plan.features:
+            lines.append(f"  - {feature}")
+
+    return "\n".join(lines)
 
 
 def _get_user_id(update: Update) -> Optional[int]:
@@ -288,12 +310,6 @@ async def _addgroup_from_raw_url(update: Update, raw_url: str) -> None:
         if resolved_feed_url in existing_urls:
             logger.info("Feed already registered", user_id=user_id, feed_url=resolved_feed_url)
             await update.message.reply_text("Este feed ya está registrado en tus grupos.")
-            return
-
-        if len(existing_feeds) >= MAX_FEEDS_PER_USER:
-            await update.message.reply_text(
-                f"Has alcanzado el límite de {MAX_FEEDS_PER_USER} feeds por usuario. Elimina uno antes de añadir otro."
-            )
             return
 
         validation = feed_parser.validate_feed_source(resolved_feed_url)

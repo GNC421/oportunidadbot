@@ -20,6 +20,10 @@ os.environ.setdefault("NVIDIA_API_KEY", "nvidia-test-key")
 os.environ.setdefault("NVIDIA_BASE_URL", "https://nvidia.local/v1")
 os.environ.setdefault("NVIDIA_MODEL", "test-model")
 os.environ.setdefault("AI_ENABLED", "true")
+os.environ.setdefault("PLAN_STARTER_PRICE", "9.90")
+os.environ.setdefault("PLAN_PROFESSIONAL_PRICE", "24.90")
+os.environ.setdefault("PLAN_ENTERPRISE_PRICE", "79.00")
+os.environ.setdefault("PLAN_CURRENCY", "EUR")
 
 pytest_plugins = [
     "tests.fixtures.users",

@@ -719,13 +719,15 @@ async def test_handlers_addgroup_duplicate(fake_update_context, monkeypatch):
 async def test_handlers_addgroup_limit_reached(fake_update_context, monkeypatch):
     handlers = _load_handlers_module()
     update, context, replies = fake_update_context(args=["https://x.com"])
-    monkeypatch.setattr(handlers, "MAX_FEEDS_PER_USER", 1)
+    monkeypatch.setattr(handlers.database, "add_user", lambda *_a, **_k: True)
+    monkeypatch.setattr(handlers.database, "add_feed", lambda *_a, **_k: None)
     monkeypatch.setattr(handlers.SourceFactory, "resolve_registration_url", lambda _u: "https://feed.local/x")
-    monkeypatch.setattr(handlers, "_fetch_user_feeds", lambda _u: [{"id": 1, "url": "https://feed.local/other"}])
+    monkeypatch.setattr(handlers, "_fetch_user_feeds", lambda _u: [])
+    monkeypatch.setattr(handlers.feed_parser, "validate_feed_source", lambda _u: {"valid": True})
 
     await handlers.addgroup_command(update, context)
 
-    assert "límite" in replies[-1]["text"]
+    assert "No se pudo guardar" in replies[-1]["text"]
 
 
 @pytest.mark.asyncio
