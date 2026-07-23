@@ -171,20 +171,20 @@ const comparisonRows = [
 const pricingPlans = [
   {
     name: "Starter",
-    price: "??€",
+    price: "9.90€",
     description: "Para profesionales que quieren validar una fuente crítica.",
     features: ["Hasta 3 fuentes", "Alertas por Telegram", "IA vertical inmobiliaria"],
   },
   {
     name: "Professional",
-    price: "??€",
+    price: "24.90€",
     description: "Pensado para equipos comerciales que necesitan cobertura diaria.",
     featured: true,
     features: ["Hasta 15 fuentes", "Prioridad en procesamiento", "Panel de oportunidades"],
   },
   {
     name: "Enterprise",
-    price: "??€",
+    price: "79.90€",
     description: "Para agencias y redes con mayor volumen y necesidades avanzadas.",
     features: ["Fuentes ilimitadas", "Equipos y permisos", "Soporte prioritario y onboarding"],
   },
@@ -704,7 +704,7 @@ export function LandingPage() {
 
         <MotionSection id="precios" className="mb-24">
           <SectionHeading
-            eyebrow="Precios orientativos"
+            eyebrow="Precios"
             title="Tres planes para anticipar el encaje de valor antes del lanzamiento."
             description="No son precios definitivos. Sirven para comunicar posicionamiento y ayudarte a evaluar el potencial retorno."
             align="center"

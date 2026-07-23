@@ -1,5 +1,6 @@
 from typing import Any, Dict, Optional
 from datetime import datetime, timezone
+from decimal import Decimal
 from urllib.parse import urlparse
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -15,16 +16,23 @@ from telegram.ext import (
 from loguru import logger
 
 from app import database
-from app.config import settings
+from app.services.stripe_service import StripeIntegrationError, get_stripe_service
+from app.services.subscription_service import get_subscription_service
+from app.subscriptions.entities import Plan
+from app.subscriptions import get_subscription_catalog
 from app.services import feed_parser
 from app.services.source_display_name import SourceDisplayNameService
 from app.sources import SourceFactory
 
-MAX_FEEDS_PER_USER = getattr(settings, "MAX_FEEDS_PER_USER", 10)
-
 MENU_ADD_SOURCE = "menu_add_source"
 MENU_MY_SOURCES = "menu_my_sources"
 MENU_HELP = "menu_help"
+MENU_SUBSCRIPTION = "menu_subscription"
+
+SUB_CONTRACT = "sub_contract"
+SUB_CHANGE = "sub_change"
+SUB_CANCEL_RENEWAL = "sub_cancel_renewal"
+SUB_OPEN_PORTAL = "sub_open_portal"
 
 WAITING_URL = 1
 
@@ -60,6 +68,7 @@ def _build_main_menu_markup() -> InlineKeyboardMarkup:
     keyboard = [
         [InlineKeyboardButton("➕ Añadir fuente", callback_data=MENU_ADD_SOURCE)],
         [InlineKeyboardButton("📂 Mis fuentes", callback_data=MENU_MY_SOURCES)],
+        [InlineKeyboardButton("💳 Mi suscripción", callback_data=MENU_SUBSCRIPTION)],
         [InlineKeyboardButton("❓ Ayuda", callback_data=MENU_HELP)],
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -84,11 +93,98 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 def _get_help_text() -> str:
     """Texto de ayuda con los comandos actualmente soportados."""
+    plans_text = _get_subscription_plans_text()
     return (
         "📋 **Lista de comandos disponibles:**\n\n"
         "/start - Mostrar menú principal\n"
         "/help - Mostrar esta ayuda\n"
-        "/addgroup [URL] - Añadir un feed a partir de una URL soportada"
+        "/subscription - Ver y gestionar tu suscripción\n"
+        "/addgroup [URL] - Añadir un feed a partir de una URL soportada\n\n"
+        "💳 **Planes**\n"
+        f"{plans_text}"
+    )
+
+
+def _format_plan_price(value: Decimal) -> str:
+    """Da formato consistente a precios de planes con dos decimales."""
+    return f"{value:.2f}"
+
+
+def _get_subscription_plans_text() -> str:
+    """Construye el bloque de planes usando exclusivamente SubscriptionCatalog."""
+    catalog = get_subscription_catalog()
+    lines: list[str] = []
+
+    for plan in catalog.list_plans():
+        limit_label = "Ilimitadas" if plan.source_limit is None else str(plan.source_limit)
+        lines.append(f"- {plan.name}: {_format_plan_price(plan.price)} {plan.currency}/mes")
+        lines.append(f"  Fuentes: {limit_label}")
+        for feature in plan.features:
+            lines.append(f"  - {feature}")
+
+    return "\n".join(lines)
+
+
+def _format_subscription_status(raw_status: str) -> str:
+    """Traduce estados técnicos de suscripción a etiquetas legibles para Telegram."""
+    labels = {
+        "active": "Activa",
+        "trialing": "En prueba",
+        "past_due": "Pago pendiente",
+        "canceled": "Cancelada",
+        "incomplete": "Incompleta",
+        "incomplete_expired": "Incompleta expirada",
+        "unpaid": "Impagada",
+    }
+    normalized = (raw_status or "").strip().lower()
+    return labels.get(normalized, raw_status or "Desconocido")
+
+
+def _format_renewal_date(value: Optional[datetime]) -> str:
+    """Formatea la fecha de renovación para la vista de suscripción."""
+    if value is None:
+        return "No disponible"
+    return value.astimezone(timezone.utc).strftime("%d/%m/%Y")
+
+
+def _build_subscription_markup() -> InlineKeyboardMarkup:
+    """Construye el teclado de acciones para gestión de suscripción."""
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("🛒 Contratar plan", callback_data=SUB_CONTRACT)],
+            [InlineKeyboardButton("🔁 Cambiar plan", callback_data=SUB_CHANGE)],
+            [InlineKeyboardButton("⏹ Cancelar renovación", callback_data=SUB_CANCEL_RENEWAL)],
+            [InlineKeyboardButton("🌐 Abrir Stripe Portal", callback_data=SUB_OPEN_PORTAL)],
+        ]
+    )
+
+
+def _build_subscription_checkout_markup() -> InlineKeyboardMarkup:
+    """Muestra las opciones de plan para abrir checkout en Stripe."""
+    plan_rows = [
+        [InlineKeyboardButton(plan.name, callback_data=f"sub_checkout_{plan.identifier}")]
+        for plan in get_subscription_catalog().list_plans()
+    ]
+    plan_rows.append([InlineKeyboardButton("⬅ Volver", callback_data=MENU_SUBSCRIPTION)])
+    return InlineKeyboardMarkup(plan_rows)
+
+
+def _build_subscription_summary_text(user_id: int) -> str:
+    """Construye el resumen de suscripción a partir de catálogo y Supabase."""
+    subscription_service = get_subscription_service()
+    subscription = subscription_service.get_current_subscription(user_id)
+    used_sources = database.user_feed_count(user_id)
+    source_limit = subscription.plan_definition.source_limit
+    limit_text = "Ilimitadas" if source_limit is None else str(source_limit)
+
+    return (
+        "💳 **Mi suscripción**\n\n"
+        f"Plan actual: {subscription.plan_definition.name}\n"
+        f"Precio mensual: {_format_plan_price(subscription.plan_definition.price)} {subscription.plan_definition.currency}/mes\n"
+        f"Estado: {_format_subscription_status(subscription.status.value)}\n"
+        f"Renovación: {_format_renewal_date(subscription.current_period_end)}\n"
+        f"Fuentes utilizadas: {used_sources}\n"
+        f"Límite de fuentes: {limit_text}"
     )
 
 
@@ -288,12 +384,6 @@ async def _addgroup_from_raw_url(update: Update, raw_url: str) -> None:
         if resolved_feed_url in existing_urls:
             logger.info("Feed already registered", user_id=user_id, feed_url=resolved_feed_url)
             await update.message.reply_text("Este feed ya está registrado en tus grupos.")
-            return
-
-        if len(existing_feeds) >= MAX_FEEDS_PER_USER:
-            await update.message.reply_text(
-                f"Has alcanzado el límite de {MAX_FEEDS_PER_USER} feeds por usuario. Elimina uno antes de añadir otro."
-            )
             return
 
         validation = feed_parser.validate_feed_source(resolved_feed_url)
@@ -591,6 +681,151 @@ async def handle_menu_my_sources(update: Update, context: ContextTypes.DEFAULT_T
         await query.message.reply_text("No se pudieron cargar tus fuentes en este momento.")
 
 
+async def subscription_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Muestra el panel de suscripción desde comando."""
+    _log_command_entry("subscription_command", update, context.args)
+    user_id = _get_user_id(update)
+    if not user_id:
+        await update.message.reply_text("No pude identificar tu usuario. Inténtalo de nuevo.")
+        return
+
+    try:
+        summary = _build_subscription_summary_text(user_id)
+        await update.message.reply_text(summary, parse_mode="Markdown", reply_markup=_build_subscription_markup())
+    except Exception:
+        logger.exception("Error al cargar panel de suscripción", user_id=user_id)
+        await update.message.reply_text("No se pudo cargar tu suscripción en este momento.")
+
+
+async def handle_menu_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Maneja la acción del menú principal para mostrar la suscripción."""
+    _log_command_entry("handle_menu_subscription", update)
+    query = update.callback_query
+    await query.answer()
+
+    user_id = _get_user_id(update)
+    if not user_id:
+        await query.message.reply_text("No pude identificar tu usuario. Inténtalo de nuevo.")
+        return
+
+    try:
+        summary = _build_subscription_summary_text(user_id)
+        await query.message.reply_text(summary, parse_mode="Markdown", reply_markup=_build_subscription_markup())
+    except Exception:
+        logger.exception("Error al mostrar menú de suscripción", user_id=user_id)
+        await query.message.reply_text("No se pudo cargar tu suscripción en este momento.")
+
+
+async def handle_subscription_contract(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Muestra selector de plan para contratar una suscripción."""
+    _log_command_entry("handle_subscription_contract", update)
+    query = update.callback_query
+    await query.answer()
+    await query.message.reply_text(
+        "Selecciona el plan que quieres contratar:",
+        reply_markup=_build_subscription_checkout_markup(),
+    )
+
+
+async def handle_subscription_change(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Muestra selector de plan para cambio de suscripción."""
+    _log_command_entry("handle_subscription_change", update)
+    query = update.callback_query
+    await query.answer()
+    await query.message.reply_text(
+        "Selecciona el nuevo plan para realizar el cambio:",
+        reply_markup=_build_subscription_checkout_markup(),
+    )
+
+
+async def handle_subscription_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Crea una sesión de checkout de Stripe para el plan seleccionado."""
+    _log_command_entry("handle_subscription_checkout", update)
+    query = update.callback_query
+    await query.answer()
+
+    user_id = _get_user_id(update)
+    if not user_id:
+        await query.message.reply_text("No pude identificar tu usuario. Inténtalo de nuevo.")
+        return
+
+    selected_plan = None
+    if context.matches:
+        selected_plan = context.matches[0].group(1)
+    elif query.data.startswith("sub_checkout_"):
+        selected_plan = query.data.replace("sub_checkout_", "", 1)
+
+    if selected_plan is None:
+        await query.message.reply_text("No pude identificar el plan seleccionado.")
+        return
+
+    try:
+        plan = Plan(selected_plan)
+        subscription = get_subscription_service().get_current_subscription(user_id)
+        session = get_stripe_service().create_checkout_session(
+            user_id=user_id,
+            plan=plan,
+            customer_id=subscription.stripe_customer_id,
+        )
+        checkout_markup = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🔐 Abrir checkout seguro", url=session.url)]]
+        )
+        await query.message.reply_text(
+            f"Checkout preparado para el plan {plan.value}. Completa el pago en Stripe:",
+            reply_markup=checkout_markup,
+        )
+    except StripeIntegrationError as exc:
+        await query.message.reply_text(f"No pude abrir checkout: {exc}")
+    except ValueError:
+        await query.message.reply_text("El plan seleccionado no es válido.")
+    except Exception:
+        logger.exception("Error creando checkout de suscripción", user_id=user_id, selected_plan=selected_plan)
+        await query.message.reply_text("No se pudo crear la sesión de checkout en este momento.")
+
+
+async def _send_customer_portal_link(update: Update, intro_text: str) -> None:
+    """Envía un enlace al Stripe Customer Portal para autogestión del usuario."""
+    query = update.callback_query
+    user_id = _get_user_id(update)
+    if not user_id:
+        await query.message.reply_text("No pude identificar tu usuario. Inténtalo de nuevo.")
+        return
+
+    try:
+        subscription = get_subscription_service().get_current_subscription(user_id)
+        if not subscription.stripe_customer_id:
+            await query.message.reply_text("Todavía no tienes un cliente de Stripe asociado a tu cuenta.")
+            return
+
+        portal_session = get_stripe_service().create_customer_portal_session(subscription.stripe_customer_id)
+        markup = InlineKeyboardMarkup([[InlineKeyboardButton("🌐 Abrir Stripe Portal", url=portal_session.url)]])
+        await query.message.reply_text(intro_text, reply_markup=markup)
+    except StripeIntegrationError as exc:
+        await query.message.reply_text(f"No pude abrir Stripe Portal: {exc}")
+    except Exception:
+        logger.exception("Error creando sesión de customer portal", user_id=user_id)
+        await query.message.reply_text("No se pudo abrir Stripe Portal en este momento.")
+
+
+async def handle_subscription_cancel_renewal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Guía al usuario para cancelar renovación desde Stripe Customer Portal."""
+    _log_command_entry("handle_subscription_cancel_renewal", update)
+    query = update.callback_query
+    await query.answer()
+    await _send_customer_portal_link(
+        update,
+        "Abre Stripe Portal para activar la cancelación al final del periodo actual.",
+    )
+
+
+async def handle_subscription_open_portal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Abre el Stripe Customer Portal para autogestión."""
+    _log_command_entry("handle_subscription_open_portal", update)
+    query = update.callback_query
+    await query.answer()
+    await _send_customer_portal_link(update, "Gestiona tu suscripción desde Stripe Portal:")
+
+
 def _parse_feed_id_from_callback_data(callback_data: str, prefix: str) -> Optional[int]:
     """Extrae el id interno del feed desde el callback_data."""
     if not callback_data.startswith(prefix):
@@ -774,10 +1009,17 @@ def register_handlers(application: Application) -> None:
 
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("subscription", subscription_command))
     application.add_handler(CommandHandler("addgroup", addgroup_command))
     application.add_handler(add_source_conversation)
     application.add_handler(CallbackQueryHandler(handle_menu_my_sources, pattern=f"^{MENU_MY_SOURCES}$"))
+    application.add_handler(CallbackQueryHandler(handle_menu_subscription, pattern=f"^{MENU_SUBSCRIPTION}$"))
     application.add_handler(CallbackQueryHandler(handle_menu_help, pattern=f"^{MENU_HELP}$"))
+    application.add_handler(CallbackQueryHandler(handle_subscription_contract, pattern=f"^{SUB_CONTRACT}$"))
+    application.add_handler(CallbackQueryHandler(handle_subscription_change, pattern=f"^{SUB_CHANGE}$"))
+    application.add_handler(CallbackQueryHandler(handle_subscription_cancel_renewal, pattern=f"^{SUB_CANCEL_RENEWAL}$"))
+    application.add_handler(CallbackQueryHandler(handle_subscription_open_portal, pattern=f"^{SUB_OPEN_PORTAL}$"))
+    application.add_handler(CallbackQueryHandler(handle_subscription_checkout, pattern=r"^sub_checkout_([a-z_]+)$"))
     application.add_handler(CallbackQueryHandler(handle_feed_pause_callback, pattern=r"^feed_pause_(\d+)$"))
     application.add_handler(CallbackQueryHandler(handle_feed_resume_callback, pattern=r"^feed_resume_(\d+)$"))
     application.add_handler(CallbackQueryHandler(handle_feed_delete_confirm, pattern=r"^feed_delete_confirm_(\d+)$"))

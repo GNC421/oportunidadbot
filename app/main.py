@@ -2,6 +2,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from loguru import logger
 from telegram import Update
 from telegram.ext import Application
@@ -11,6 +12,8 @@ from .config import settings
 from .bot import create_application
 from .database import init_db
 from .jobs.scheduler import start_scheduler, stop_scheduler
+from .services.stripe_service import StripeIntegrationError, get_stripe_service
+from .subscriptions.entities import Plan
 
 # Variable global para mantener la aplicación del bot
 bot_app: Application = None
@@ -132,6 +135,99 @@ async def webhook_endpoint(request: Request) -> JSONResponse:
     except Exception as e:
         logger.error(f"Error procesando webhook: {e}")
         raise HTTPException(status_code=500, detail="Error interno")
+
+
+class StripeCheckoutRequest(BaseModel):
+    user_id: int
+    plan: Plan
+    customer_id: str | None = None
+
+
+class StripePortalRequest(BaseModel):
+    customer_id: str
+
+
+@app.post("/stripe/checkout-session")
+async def create_checkout_session(payload: StripeCheckoutRequest) -> JSONResponse:
+    """Crea una sesión de Checkout de Stripe para suscripción."""
+    try:
+        result = get_stripe_service().create_checkout_session(
+            user_id=payload.user_id,
+            plan=payload.plan,
+            customer_id=payload.customer_id,
+        )
+        return JSONResponse(content={"id": result.id, "url": result.url})
+    except StripeIntegrationError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    except Exception as exc:
+        logger.exception("Error creando checkout session", user_id=payload.user_id, plan=payload.plan.value)
+        raise HTTPException(status_code=500, detail="No se pudo crear la sesión de checkout")
+
+
+@app.post("/stripe/customer-portal")
+async def create_customer_portal_session(payload: StripePortalRequest) -> JSONResponse:
+    """Crea una sesión de Stripe Customer Portal para autogestión del cliente."""
+    try:
+        result = get_stripe_service().create_customer_portal_session(customer_id=payload.customer_id)
+        return JSONResponse(content={"id": result.id, "url": result.url})
+    except StripeIntegrationError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    except Exception:
+        logger.exception("Error creando customer portal session", customer_id=payload.customer_id)
+        raise HTTPException(status_code=500, detail="No se pudo crear la sesión de customer portal")
+
+
+@app.get("/stripe/customers/{customer_id}")
+async def get_stripe_customer(customer_id: str) -> JSONResponse:
+    """Consulta un customer en Stripe."""
+    try:
+        customer = get_stripe_service().get_customer(customer_id)
+        return JSONResponse(content={"customer": dict(customer)})
+    except StripeIntegrationError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    except Exception:
+        logger.exception("Error consultando customer", customer_id=customer_id)
+        raise HTTPException(status_code=500, detail="No se pudo consultar el customer")
+
+
+@app.get("/stripe/subscriptions/{subscription_id}")
+async def get_stripe_subscription(subscription_id: str) -> JSONResponse:
+    """Consulta una suscripción en Stripe."""
+    try:
+        subscription = get_stripe_service().get_subscription(subscription_id)
+        return JSONResponse(content={"subscription": dict(subscription)})
+    except StripeIntegrationError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    except Exception:
+        logger.exception("Error consultando suscripción", subscription_id=subscription_id)
+        raise HTTPException(status_code=500, detail="No se pudo consultar la suscripción")
+
+
+@app.post("/stripe/webhook")
+async def stripe_webhook_endpoint(request: Request) -> JSONResponse:
+    """Webhook de Stripe para sincronizar suscripciones en Supabase."""
+    signature = request.headers.get("Stripe-Signature")
+    if not signature:
+        raise HTTPException(status_code=400, detail="Missing Stripe-Signature header")
+
+    payload = await request.body()
+
+    try:
+        stripe_service = get_stripe_service()
+        event = stripe_service.construct_webhook_event(payload=payload, signature=signature)
+        processed = stripe_service.process_webhook_event(event)
+        if not processed:
+            raise HTTPException(status_code=500, detail="No se pudo procesar el evento")
+        return JSONResponse(content={"ok": True})
+    except HTTPException:
+        raise
+    except StripeIntegrationError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid payload")
+    except Exception:
+        logger.exception("Error procesando webhook de Stripe")
+        raise HTTPException(status_code=400, detail="Invalid Stripe signature")
 
 # Opcional: endpoint para pruebas
 @app.get("/ping")
