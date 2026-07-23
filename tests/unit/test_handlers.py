@@ -148,6 +148,111 @@ async def test_handlers_start_and_help(fake_update_context):
     assert "¿Qué quieres hacer?" in replies[0]["text"]
     assert "Lista de comandos" in replies[1]["text"]
 
+    buttons = replies[0]["kwargs"]["reply_markup"].inline_keyboard
+    callback_data = [row[0].callback_data for row in buttons]
+    assert handlers.MENU_SUBSCRIPTION in callback_data
+
+
+@pytest.mark.asyncio
+async def test_handlers_menu_subscription_shows_current_subscription(fake_update_context, monkeypatch):
+    handlers = _load_handlers_module()
+    update, context, replies = fake_update_context()
+
+    fake_plan = SimpleNamespace(
+        name="Professional",
+        price=handlers.Decimal("24.90"),
+        currency="EUR",
+        source_limit=15,
+    )
+    fake_subscription = SimpleNamespace(
+        status=SimpleNamespace(value="active"),
+        current_period_end=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        plan_definition=fake_plan,
+        stripe_customer_id="cus_123",
+    )
+
+    class _FakeSubscriptionService:
+        def get_current_subscription(self, _user_id: int):
+            return fake_subscription
+
+    monkeypatch.setattr(handlers, "get_subscription_service", lambda: _FakeSubscriptionService())
+    monkeypatch.setattr(handlers.database, "user_feed_count", lambda _user_id: 5)
+
+    await handlers.subscription_command(update, context)
+
+    message = replies[-1]["text"]
+    assert "Mi suscripción" in message
+    assert "Professional" in message
+    assert "24.90 EUR/mes" in message
+    assert "Activa" in message
+    assert "01/08/2026" in message
+    assert "Fuentes utilizadas: 5" in message
+    assert "Límite de fuentes: 15" in message
+
+
+@pytest.mark.asyncio
+async def test_handlers_subscription_checkout_creates_link(monkeypatch):
+    handlers = _load_handlers_module()
+    update, context, replies, _edits = _build_callback_update("sub_checkout_professional")
+    context.matches = [SimpleNamespace(group=lambda _idx: "professional")]
+
+    class _FakeSubscriptionService:
+        def get_current_subscription(self, _user_id: int):
+            return SimpleNamespace(stripe_customer_id="cus_123")
+
+    class _FakeStripeService:
+        def create_checkout_session(self, **kwargs):
+            assert kwargs["plan"].value == "professional"
+            return SimpleNamespace(url="https://checkout.stripe.test", id="cs_123")
+
+    monkeypatch.setattr(handlers, "get_subscription_service", lambda: _FakeSubscriptionService())
+    monkeypatch.setattr(handlers, "get_stripe_service", lambda: _FakeStripeService())
+
+    await handlers.handle_subscription_checkout(update, context)
+
+    assert "Checkout preparado" in replies[-1]["text"]
+    button = replies[-1]["kwargs"]["reply_markup"].inline_keyboard[0][0]
+    assert button.url == "https://checkout.stripe.test"
+
+
+@pytest.mark.asyncio
+async def test_handlers_subscription_portal_without_customer(monkeypatch):
+    handlers = _load_handlers_module()
+    update, context, replies, _edits = _build_callback_update("sub_open_portal")
+
+    class _FakeSubscriptionService:
+        def get_current_subscription(self, _user_id: int):
+            return SimpleNamespace(stripe_customer_id=None)
+
+    monkeypatch.setattr(handlers, "get_subscription_service", lambda: _FakeSubscriptionService())
+
+    await handlers.handle_subscription_open_portal(update, context)
+
+    assert "cliente de Stripe" in replies[-1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_handlers_subscription_cancel_renewal_sends_portal_link(monkeypatch):
+    handlers = _load_handlers_module()
+    update, context, replies, _edits = _build_callback_update("sub_cancel_renewal")
+
+    class _FakeSubscriptionService:
+        def get_current_subscription(self, _user_id: int):
+            return SimpleNamespace(stripe_customer_id="cus_123")
+
+    class _FakeStripeService:
+        def create_customer_portal_session(self, _customer_id: str):
+            return SimpleNamespace(url="https://billing.stripe.test", id="bps_123")
+
+    monkeypatch.setattr(handlers, "get_subscription_service", lambda: _FakeSubscriptionService())
+    monkeypatch.setattr(handlers, "get_stripe_service", lambda: _FakeStripeService())
+
+    await handlers.handle_subscription_cancel_renewal(update, context)
+
+    assert "cancelación" in replies[-1]["text"]
+    button = replies[-1]["kwargs"]["reply_markup"].inline_keyboard[0][0]
+    assert button.url == "https://billing.stripe.test"
+
 
 @pytest.mark.asyncio
 async def test_handlers_groups_with_data(fake_update_context, monkeypatch):
