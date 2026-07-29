@@ -10,6 +10,7 @@ The rest of the bot should not care where items come from.
 ## Current Sources
 
 - `RSSSource`: wraps existing RSS parsing behavior.
+- `RedditSource`: maps Reddit URLs to official RSS (`/.rss`) and delegates parsing to RSS source.
 - `TablonSource`: HTML scraper for tablondeanuncios.com listings.
 
 ## Base Contract

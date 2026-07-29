@@ -53,6 +53,74 @@ def test_database_add_or_update_user(monkeypatch, fake_supabase):
 
     assert user is not None
     assert user["username"] == "updated"
+    assert user["plan"] == "starter"
+    assert user["subscription_status"] == "active"
+    assert user["cancel_at_period_end"] is False
+
+
+def test_database_update_user_subscription(monkeypatch, fake_supabase):
+    monkeypatch.setattr(database, "supabase", fake_supabase)
+    database.add_user(101, "tester")
+
+    ok = database.update_user_subscription(
+        user_id=101,
+        plan="professional",
+        subscription_status="active",
+        stripe_customer_id="cus_1",
+        stripe_subscription_id="sub_1",
+        current_period_end="2026-07-31T00:00:00+00:00",
+        cancel_at_period_end=True,
+    )
+
+    user = database.get_user(101)
+    assert ok is True
+    assert user is not None
+    assert user["plan"] == "professional"
+    assert user["subscription_status"] == "active"
+    assert user["stripe_customer_id"] == "cus_1"
+    assert user["stripe_subscription_id"] == "sub_1"
+    assert user["current_period_end"] == "2026-07-31T00:00:00+00:00"
+    assert user["cancel_at_period_end"] is True
+
+
+def test_database_get_user_by_stripe_customer_id(monkeypatch, fake_supabase):
+    monkeypatch.setattr(database, "supabase", fake_supabase)
+    database.add_user(101, "tester")
+    database.update_user_subscription(
+        user_id=101,
+        plan="starter",
+        subscription_status="active",
+        stripe_customer_id="cus_123",
+        stripe_subscription_id="sub_123",
+    )
+
+    user = database.get_user_by_stripe_customer_id("cus_123")
+    assert user is not None
+    assert user["id"] == 101
+
+
+def test_database_register_and_mark_stripe_webhook_event(monkeypatch, fake_supabase):
+    monkeypatch.setattr(database, "supabase", fake_supabase)
+
+    first = database.register_stripe_webhook_event(
+        event_id="evt_1",
+        event_type="checkout.session.completed",
+        payload={"id": "evt_1"},
+    )
+    duplicated = database.register_stripe_webhook_event(
+        event_id="evt_1",
+        event_type="checkout.session.completed",
+        payload={"id": "evt_1"},
+    )
+    updated = database.mark_stripe_webhook_event_status("evt_1", status="processed")
+
+    assert first is True
+    assert duplicated is False
+    assert updated is True
+
+    rows = fake_supabase.table("stripe_webhook_events").select("*").eq("event_id", "evt_1").execute().data
+    assert len(rows) == 1
+    assert rows[0]["status"] == "processed"
 
 
 def test_database_feed_status_and_exists(monkeypatch, fake_supabase):
@@ -63,6 +131,23 @@ def test_database_feed_status_and_exists(monkeypatch, fake_supabase):
     assert database.user_feed_count(101) == 1
     assert database.disable_feed(101, feed_id) is True
     assert database.enable_feed(101, feed_id) is True
+
+
+def test_database_add_feed_respects_subscription_limits(monkeypatch, fake_supabase):
+    monkeypatch.setattr(database, "supabase", fake_supabase)
+
+    class _BlockingSubscriptionService:
+        def can_add_source(self, _user_id: int) -> bool:
+            return False
+
+    monkeypatch.setattr(
+        "app.services.subscription_service.get_subscription_service",
+        lambda: _BlockingSubscriptionService(),
+    )
+
+    feed_id = database.add_feed(101, "https://rss.local/blocked")
+    assert feed_id is None
+    assert database.get_user_feeds(101) == []
 
 
 def test_database_get_active_feeds_and_delete(monkeypatch, fake_supabase):

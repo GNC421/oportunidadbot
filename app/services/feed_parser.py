@@ -8,6 +8,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.services.ai_classifier import classifier
 from app.sources import SourceFactory
+from app.logging_flow import flow_log
 
 def _parse_feed_source(url: str) -> Optional[Any]:
     """Obtiene el objeto parseado por feedparser para una URL dada."""
@@ -80,7 +81,9 @@ def detect_question(text: str) -> bool:
 
 def check_user_feeds(feed: Dict) -> List[Dict]:
     """Revisa un feed y devuelve solo las entradas que parecen preguntas relevantes."""
-    logger.info("🔄 Iniciando revisión de feed...")
+    total_steps = 6
+    # step 1 is emitted by the orchestrator; feed parser starts at step 2
+    flow_log(2, total_steps, "Iniciando revisión del feed...")
     logger.debug("check_user_feeds called", feed_id=feed.get("id"), user_id=feed.get("user_id"))
 
     try:
@@ -94,13 +97,19 @@ def check_user_feeds(feed: Dict) -> List[Dict]:
             logger.info("No entries parsed for feed", url=url)
             return []
 
+        flow_log(2, total_steps, f"Feed obtenido: {len(entries)} publicaciones")
+
         results: List[Dict] = []
         for entry in entries:
-            full_text = f"{entry.get('title', '')} {entry.get('summary', '')}".strip()
-            if detect_question(full_text):
+            title = entry.get("title", "")
+            full_text = f"{title} {entry.get('summary', '')}".strip()
+            flow_log(3, total_steps, f"Analizando publicación: \"{title}\"")
+            is_question = detect_question(full_text)
+            flow_log(4, total_steps, f"NVIDIA responde: {'YES' if is_question else 'NO'}")
+            if is_question:
                 results.append(
                     {
-                        "title": entry.get("title", ""),
+                        "title": title,
                         "summary": entry.get("summary", ""),
                         "url": entry.get("link", ""),
                         "author": entry.get("author", ""),

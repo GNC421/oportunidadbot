@@ -41,5 +41,21 @@ class Settings(BaseSettings):
 
     # Logging
     LOG_LEVEL: str = Field("INFO", description="Nivel de logging")
+
+    # Subscription catalog
+    PLAN_STARTER_PRICE: str = Field(..., description="Precio mensual del plan Starter")
+    PLAN_PROFESSIONAL_PRICE: str = Field(..., description="Precio mensual del plan Professional")
+    PLAN_ENTERPRISE_PRICE: str = Field(..., description="Precio mensual del plan Enterprise")
+    PLAN_CURRENCY: str = Field("EUR", description="Moneda de los planes")
+
+    # Stripe (future use)
+    STRIPE_SECRET_KEY: Optional[str] = Field(None, description="Secret key de Stripe")
+    STRIPE_WEBHOOK_SECRET: Optional[str] = Field(None, description="Secreto de webhooks de Stripe")
+    STRIPE_STARTER_PRICE_ID: Optional[str] = Field(None, description="Price ID de Stripe para Starter")
+    STRIPE_PROFESSIONAL_PRICE_ID: Optional[str] = Field(None, description="Price ID de Stripe para Professional")
+    STRIPE_ENTERPRISE_PRICE_ID: Optional[str] = Field(None, description="Price ID de Stripe para Enterprise")
+    STRIPE_CHECKOUT_SUCCESS_URL: Optional[str] = Field(None, description="URL de retorno tras pago correcto")
+    STRIPE_CHECKOUT_CANCEL_URL: Optional[str] = Field(None, description="URL de retorno tras cancelar checkout")
+    STRIPE_PORTAL_RETURN_URL: Optional[str] = Field(None, description="URL de retorno del customer portal")
     
 settings = Settings()
