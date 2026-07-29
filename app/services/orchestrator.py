@@ -10,6 +10,7 @@ from app.database import (
 )
 from app.services.alert_service import send_alert
 from app.services.feed_parser import check_user_source_entries
+from app.logging_flow import flow_log
 
 logger = logging.getLogger(__name__)
 
@@ -49,15 +50,18 @@ class Orchestrator:
             post_data=payload,
         )
         logger.info(f"Alerta guardada ({alert_id})")
+        flow_log(5, 6, "Alerta guardada")
 
         await send_alert(user_id=user_id, post_data=payload, feed_id=feed_id)
         logger.debug("Alert sent request completed", user_id=user_id, feed_id=feed_id)
+        flow_log(6, 6, "Telegram enviado correctamente")
 
         if alert_id:
             mark_alert_sent(alert_id)
 
     async def run_feed_checks(self) -> int:
         logger.debug("run_feed_checks started")
+        flow_log(1, 6, "Scheduler inicia revisión del feed...")
         logger.info("=" * 60)
         logger.info("Iniciando comprobación de feeds")
         logger.info("=" * 60)
