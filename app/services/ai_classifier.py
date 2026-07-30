@@ -2,6 +2,7 @@ import asyncio
 import time
 from collections import OrderedDict
 from typing import Optional
+import inspect
 
 from app.services.prompts import REAL_ESTATE_CLASSIFIER_PROMPT
 
@@ -131,14 +132,41 @@ class AIClassifier:
         last_error: Optional[Exception] = None
         for attempt in range(self._max_retries):
             try:
-                resp = await self._sdk_client.chat.completions.create(
+                # Llamada directa siguiendo tu ejemplo (OpenAI library)
+                completion = self._sdk_client.chat.completions.create(
                     model=self._model,
                     messages=messages,
-                    temperature=0,
-                    max_tokens=8,
+                    temperature=0.2,
+                    top_p=0.7,
+                    max_tokens=1024,
+                    stream=True,
                 )
 
-                # resp may be mapping-like or object
+                if inspect.isawaitable(completion):
+                    completion = await completion
+
+                content_parts: list[str] = []
+
+                # Iterar los chunks como en tu snippet
+                for chunk in completion:
+                    try:
+                        if getattr(chunk.choices[0].delta, "content", None) is not None:
+                            content_parts.append(chunk.choices[0].delta.content)
+                    except Exception:
+                        # Fallback best-effort when chunk is a mapping
+                        try:
+                            if isinstance(chunk, dict):
+                                choices = chunk.get("choices") or []
+                                if choices and choices[0].get("delta", {}).get("content"):
+                                    content_parts.append(choices[0]["delta"]["content"])
+                        except Exception:
+                            pass
+
+                if content_parts:
+                    return "".join(str(p) for p in content_parts).strip()
+
+                # Fallback: tratar completion como respuesta no-stream
+                resp = completion
                 choices = None
                 try:
                     choices = resp.get("choices") if hasattr(resp, "get") else getattr(resp, "choices", None)
