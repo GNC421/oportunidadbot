@@ -202,5 +202,15 @@ class AIClassifier:
             logger.exception(f"Error parseando la respuesta de IA: {exc}")
             return False
 
+    def clear_cache(self) -> int:
+        """Vacía la caché en memoria y devuelve cuántas entradas había."""
+        n = len(self._cache)
+        try:
+            self._cache.clear()
+        except Exception:
+            # ensure no exceptions bubble up
+            pass
+        return n
+
 
 classifier = AIClassifier()
