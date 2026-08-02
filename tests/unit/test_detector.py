@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import httpx
+from types import SimpleNamespace
 import pytest
 
 from app.services.ai_classifier import AIClassifier
@@ -46,21 +46,16 @@ async def test_detector_invalid_response_returns_false(monkeypatch):
 async def test_detector_http500_retries_and_fails(monkeypatch):
     detector = AIClassifier()
     calls = {"n": 0}
+    class FakeCompletions:
+        def __init__(self, calls):
+            self.calls = calls
 
-    class FakeResponse:
-        def raise_for_status(self):
-            request = httpx.Request("POST", "https://nvidia.local/v1/chat/completions")
-            response = httpx.Response(500, request=request)
-            raise httpx.HTTPStatusError("server error", request=request, response=response)
-        def json(self):
-            return {}
+        async def create(self, *_a, **_k):
+            self.calls["n"] += 1
+            raise Exception("server error")
 
-    class FakeClient:
-        async def post(self, *_a, **_k):
-            calls["n"] += 1
-            return FakeResponse()
-
-    monkeypatch.setattr(detector, "_get_client", lambda: _async_value(FakeClient()))
+    fake_sdk = SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions(calls)))
+    detector._sdk_client = fake_sdk
     monkeypatch.setattr("app.services.ai_classifier.asyncio.sleep", lambda *_a, **_k: _async_value(None))
 
     response = await detector._call_nvidia("t", "s")
@@ -73,25 +68,18 @@ async def test_detector_http500_retries_and_fails(monkeypatch):
 async def test_detector_retries_until_success(monkeypatch):
     detector = AIClassifier()
     calls = {"n": 0}
+    class FakeCompletions:
+        def __init__(self, calls):
+            self.calls = calls
 
-    class FakeResponse:
-        def __init__(self, ok: bool) -> None:
-            self.ok = ok
+        async def create(self, *_a, **_k):
+            self.calls["n"] += 1
+            if self.calls["n"] == detector._max_retries:
+                return {"choices": [{"message": {"content": "true"}}]}
+            raise Exception("boom")
 
-        def raise_for_status(self):
-            if not self.ok:
-                request = httpx.Request("POST", "https://nvidia.local/v1/chat/completions")
-                response = httpx.Response(500, request=request)
-                raise httpx.HTTPStatusError("boom", request=request, response=response)
-        def json(self):
-            return {"choices": [{"message": {"content": "true"}}]}
-
-    class FakeClient:
-        async def post(self, *_a, **_k):
-            calls["n"] += 1
-            return FakeResponse(ok=calls["n"] == detector._max_retries)
-
-    monkeypatch.setattr(detector, "_get_client", lambda: _async_value(FakeClient()))
+    fake_sdk = SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions(calls)))
+    detector._sdk_client = fake_sdk
     monkeypatch.setattr("app.services.ai_classifier.asyncio.sleep", lambda *_a, **_k: _async_value(None))
 
     response = await detector._call_nvidia("t", "s")
@@ -156,29 +144,19 @@ async def test_detector_call_nvidia_without_key_returns_none():
 @pytest.mark.asyncio
 async def test_detector_call_nvidia_without_choices(monkeypatch):
     detector = AIClassifier()
-
-    class FakeResponse:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
+    class FakeCompletions:
+        async def create(self, *_a, **_k):
             return {"choices": []}
 
-    class FakeClient:
-        async def post(self, *_a, **_k):
-            return FakeResponse()
-
-    monkeypatch.setattr(detector, "_get_client", lambda: _async_value(FakeClient()))
+    fake_sdk = SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions()))
+    detector._sdk_client = fake_sdk
 
     assert await detector._call_nvidia("t", "s") is None
 
 
-@pytest.mark.asyncio
-async def test_detector_get_client_and_close():
+def test_detector_get_sdk_client_initialized():
     detector = AIClassifier()
-    client = await detector._get_client()
-    assert client is not None
-    await detector.close()
+    assert getattr(detector, "_sdk_client", None) is not None
 
 
 def test_detector_cache_eviction():

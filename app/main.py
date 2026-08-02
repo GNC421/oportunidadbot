@@ -14,6 +14,9 @@ from .database import init_db
 from .jobs.scheduler import start_scheduler, stop_scheduler
 from .services.stripe_service import StripeIntegrationError, get_stripe_service
 from .subscriptions.entities import Plan
+from fastapi import Depends
+from fastapi.security import APIKeyHeader
+from app.services.ai_classifier import classifier
 
 # Variable global para mantener la aplicación del bot
 bot_app: Application = None
@@ -228,6 +231,27 @@ async def stripe_webhook_endpoint(request: Request) -> JSONResponse:
     except Exception:
         logger.exception("Error procesando webhook de Stripe")
         raise HTTPException(status_code=400, detail="Invalid Stripe signature")
+
+
+# --- Admin endpoints ---
+api_key_header = APIKeyHeader(name="x-admin-key", auto_error=False)
+
+def _require_admin(key: str | None = Depends(api_key_header)) -> None:
+    if not settings.ADMIN_API_KEY:
+        raise HTTPException(status_code=403, detail="Admin endpoints disabled")
+    if key != settings.ADMIN_API_KEY:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
+@app.post("/admin/clear-ai-cache", dependencies=[Depends(_require_admin)])
+def clear_ai_cache():
+    """Endpoint administrativo para vaciar la caché del clasificador IA."""
+    try:
+        cleared = classifier.clear_cache()
+        return JSONResponse(content={"cleared": cleared})
+    except Exception:
+        logger.exception("Error clearing AI classifier cache")
+        raise HTTPException(status_code=500, detail="Error clearing cache")
 
 # Opcional: endpoint para pruebas
 @app.get("/ping")

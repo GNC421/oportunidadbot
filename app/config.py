@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     PLAN_ENTERPRISE_PRICE: str = Field(..., description="Precio mensual del plan Enterprise")
     PLAN_CURRENCY: str = Field("EUR", description="Moneda de los planes")
 
+    # Admin
+    ADMIN_API_KEY: Optional[str] = Field(None, description="Clave API para endpoints administrativos")
+
     # Stripe (future use)
     STRIPE_SECRET_KEY: Optional[str] = Field(None, description="Secret key de Stripe")
     STRIPE_WEBHOOK_SECRET: Optional[str] = Field(None, description="Secreto de webhooks de Stripe")

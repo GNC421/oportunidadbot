@@ -102,7 +102,30 @@ def check_user_feeds(feed: Dict) -> List[Dict]:
         results: List[Dict] = []
         for entry in entries:
             title = entry.get("title", "")
-            full_text = f"{title} {entry.get('summary', '')}".strip()
+            # Combine multiple possible fields to ensure the classifier receives the full message
+            parts = [title]
+            # summary/description fields
+            for fld in ("summary", "description"):
+                v = entry.get(fld)
+                if v:
+                    parts.append(v)
+
+            # content may be a list of dicts (feedparser) or a string
+            content = entry.get("content")
+            if content:
+                if isinstance(content, list):
+                    try:
+                        first = content[0]
+                        if isinstance(first, dict):
+                            val = first.get("value")
+                            if val:
+                                parts.append(val)
+                    except Exception:
+                        pass
+                elif isinstance(content, str):
+                    parts.append(content)
+
+            full_text = " ".join([p for p in parts if p]).strip()
             flow_log(3, total_steps, f"Analizando publicación: \"{title}\"")
             is_question = detect_question(full_text)
             flow_log(4, total_steps, f"NVIDIA responde: {'YES' if is_question else 'NO'}")

@@ -2,13 +2,20 @@ import asyncio
 import time
 from collections import OrderedDict
 from typing import Optional
+import inspect
 
 from app.services.prompts import REAL_ESTATE_CLASSIFIER_PROMPT
 
-import httpx
 from loguru import logger
 
 from app.config import settings
+
+# Require OpenAI SDK for the classifier
+try:
+    from openai import OpenAI  # type: ignore
+except Exception as exc:  # pragma: no cover - installation environment dependent
+    OpenAI = None
+    logger.error("OpenAI SDK no está instalado: %s", exc)
 
 
 class AIClassifier:
@@ -21,7 +28,6 @@ class AIClassifier:
         self._ai_enabled: bool = settings.AI_ENABLED
         self._timeout: float = 20.0
         self._max_retries: int = 3
-        self._client: Optional[httpx.AsyncClient] = None
         self._cache: OrderedDict[str, bool] = OrderedDict()
         self._cache_limit: int = 1000
         self._metrics = {
@@ -30,6 +36,16 @@ class AIClassifier:
             "responses_no": 0,
             "errors": 0,
         }
+        # Enforce SDK usage
+        if not OpenAI:
+            raise ImportError("El paquete 'openai' no está instalado. Instálalo con 'pip install openai'.")
+
+        try:
+            self._sdk_client = OpenAI(base_url=self._base_url, api_key=self._api_key)
+            logger.debug("OpenAI SDK client initialized", base_url=self._base_url)
+        except Exception as exc:  # pragma: no cover - environment dependent
+            logger.exception(f"No se pudo inicializar OpenAI SDK: {exc}")
+            raise
 
     async def is_business_opportunity(self, title: str, summary: str) -> bool:
         """Devuelve True si el texto parece una oportunidad de negocio relevante."""
@@ -102,67 +118,76 @@ class AIClassifier:
         if len(self._cache) > self._cache_limit:
             self._cache.popitem(last=False)
 
-    async def _get_client(self) -> httpx.AsyncClient:
-        """Reutiliza un cliente HTTP asíncrono para todas las peticiones."""
-        if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(timeout=httpx.Timeout(self._timeout))
-        return self._client
-
-    async def close(self) -> None:
-        """Cierra el cliente HTTP reutilizado."""
-        if self._client is not None and not self._client.is_closed:
-            await self._client.aclose()
-
     async def _call_nvidia(self, title: str, summary: str) -> Optional[str]:
-        """Realiza la llamada a la API de NVIDIA y devuelve el texto generado."""
+        """Realiza la llamada a la API de NVIDIA usando exclusivamente el SDK OpenAI y devuelve el texto generado."""
         if not self._api_key:
             logger.warning("No hay API key de NVIDIA configurada; se omite la llamada")
             return None
 
-        url = f"{self._base_url.rstrip('/')}/chat/completions"
-        payload = {
-            "model": self._model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": REAL_ESTATE_CLASSIFIER_PROMPT,
-                },
-                {
-                    "role": "user",
-                    "content": f"Título: {title}\n\nContenido: {summary}",
-                },
-            ],
-            "temperature": 0,
-            "max_tokens": 8,
-        }
-        headers = {
-            "Authorization": f"Bearer {self._api_key}",
-            "Content-Type": "application/json",
-        }
+        messages = [
+            {"role": "system", "content": REAL_ESTATE_CLASSIFIER_PROMPT},
+            {"role": "user", "content": f"Título: {title}\n\nContenido: {summary}"},
+        ]
 
         last_error: Optional[Exception] = None
-        client = await self._get_client()
-
         for attempt in range(self._max_retries):
             try:
-                response = await client.post(url, json=payload, headers=headers)
-                response.raise_for_status()
-                data = response.json()
-                choices = data.get("choices") or []
+                # Llamada directa siguiendo tu ejemplo (OpenAI library)
+                completion = self._sdk_client.chat.completions.create(
+                    model=self._model,
+                    messages=messages,
+                    temperature=0.2,
+                    top_p=0.7,
+                    max_tokens=1024,
+                    stream=True,
+                )
+
+                if inspect.isawaitable(completion):
+                    completion = await completion
+
+                content_parts: list[str] = []
+
+                # Iterar los chunks como en tu snippet
+                for chunk in completion:
+                    try:
+                        if getattr(chunk.choices[0].delta, "content", None) is not None:
+                            content_parts.append(chunk.choices[0].delta.content)
+                    except Exception:
+                        # Fallback best-effort when chunk is a mapping
+                        try:
+                            if isinstance(chunk, dict):
+                                choices = chunk.get("choices") or []
+                                if choices and choices[0].get("delta", {}).get("content"):
+                                    content_parts.append(choices[0]["delta"]["content"])
+                        except Exception:
+                            pass
+
+                if content_parts:
+                    return "".join(str(p) for p in content_parts).strip()
+
+                # Fallback: tratar completion como respuesta no-stream
+                resp = completion
+                choices = None
+                try:
+                    choices = resp.get("choices") if hasattr(resp, "get") else getattr(resp, "choices", None)
+                except Exception:
+                    choices = getattr(resp, "choices", None)
+
                 if not choices:
-                    logger.warning("La respuesta de NVIDIA no contiene choices")
+                    logger.warning("La respuesta SDK de NVIDIA no contiene choices")
                     return None
 
-                message = choices[0].get("message", {})
-                content = message.get("content") or ""
+                first = choices[0]
+                message = first.get("message") if isinstance(first, dict) else getattr(first, "message", None)
+                content = message.get("content") if isinstance(message, dict) else getattr(message, "content", "")
                 return str(content).strip()
             except Exception as exc:
                 last_error = exc
-                logger.warning(f"Intento {attempt + 1}/{self._max_retries} fallido al llamar a NVIDIA: {exc}")
+                logger.warning(f"Intento {attempt + 1}/{self._max_retries} fallido con OpenAI SDK: {exc}")
                 if attempt < self._max_retries - 1:
                     await asyncio.sleep(1.0 * (attempt + 1))
 
-        logger.exception(f"Error final al llamar a NVIDIA: {last_error}")
+        logger.exception(f"Error final al llamar a NVIDIA via SDK: {last_error}")
         return None
 
     def _parse_response(self, response: Optional[str]) -> bool:
@@ -176,6 +201,16 @@ class AIClassifier:
         except Exception as exc:
             logger.exception(f"Error parseando la respuesta de IA: {exc}")
             return False
+
+    def clear_cache(self) -> int:
+        """Vacía la caché en memoria y devuelve cuántas entradas había."""
+        n = len(self._cache)
+        try:
+            self._cache.clear()
+        except Exception:
+            # ensure no exceptions bubble up
+            pass
+        return n
 
 
 classifier = AIClassifier()
