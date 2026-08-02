@@ -39,6 +39,9 @@ tenacity==9.1.2
 # Logging
 loguru==0.7.3
 
+# Templating
+jinja2==3.1.2
+
 # Testing
 pytest==8.3.3
 pytest-asyncio==0.24.0
