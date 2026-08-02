@@ -11,6 +11,9 @@ from app.database import (
 from app.services.alert_service import send_alert
 from app.services.feed_parser import check_user_source_entries
 from app.logging_flow import flow_log
+from app.debug.trace_service import get_trace_service
+from app.debug.trace_models import EventType
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +65,9 @@ class Orchestrator:
     async def run_feed_checks(self) -> int:
         logger.debug("run_feed_checks started")
         flow_log(1, 6, "Scheduler inicia revisión del feed...")
+        trace = get_trace_service()
+        start_ts = time.perf_counter()
+        event_id = await trace.start(type=EventType.SCHEDULER, name="Scheduler run", input_payload={})
         logger.info("=" * 60)
         logger.info("Iniciando comprobación de feeds")
         logger.info("=" * 60)
@@ -71,6 +77,7 @@ class Orchestrator:
             feeds = get_active_feeds()
         except Exception:
             logger.exception("No se pudieron obtener los feeds")
+            await trace.error(event_id, error="No se pudieron obtener los feeds")
             return 0
 
         if not feeds:
@@ -115,6 +122,8 @@ class Orchestrator:
                 logger.exception(f"Error procesando feed {feed.get('url')}")
 
         logger.info(f"Finalizada comprobación. Alertas enviadas: {total_alerts}")
+        elapsed = round(time.perf_counter() - start_ts, 3)
+        await trace.success(event_id, output_payload={"alerts": total_alerts, "feeds_checked": len(feeds), "elapsed_s": elapsed})
         return total_alerts
 
 

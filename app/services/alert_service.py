@@ -4,6 +4,8 @@ from loguru import logger
 import os
 
 from app.database import get_user
+from app.debug.trace_service import get_trace_service
+from app.debug.trace_models import EventType
 
 BOT_USERNAME = os.getenv("BOT_USERNAME", "OportunidadBot")
 
@@ -51,6 +53,9 @@ async def send_alert(user_id: int, post_data: dict, feed_id: int):
     """Envía una alerta a un usuario específico"""
     logger.debug("send_alert called", user_id=user_id, feed_id=feed_id, post_url=post_data.get("link"))
     from app.bot import application
+
+    trace = get_trace_service()
+    event_id = await trace.start(type=EventType.TELEGRAM, name="Send alert", input_payload={"user_id": user_id, "feed_id": feed_id, "post": {"title": post_data.get("title")}})
     
     # Obtener información del usuario para personalizar
     user = get_user(user_id)
@@ -95,5 +100,7 @@ async def send_alert(user_id: int, post_data: dict, feed_id: int):
             reply_markup=reply_markup
         )
         logger.info(f"📨 Alerta enviada a {user_id}: {title[:50]}...")
+        await trace.success(event_id, output_payload={"sent_to": user_id, "title": title})
     except Exception as e:
         logger.error(f"❌ Error al enviar alerta a {user_id}: {e}")
+        await trace.error(event_id, error=str(e))

@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta http-equiv="refresh" content="5">
+    <title>OportunidadBot — Monitor</title>
+    <style>
+      :root{
+        --bg:#0f1724; --panel:#0b1220; --muted:#94a3b8; --accent:#60a5fa; --card:#071025; --success:#10b981; --error:#ef4444; --warn:#f59e0b; --glass: rgba(255,255,255,0.04);
+      }
+      @media (prefers-color-scheme: light){
+        :root{ --bg:#f6f8fb; --panel:#ffffff; --muted:#475569; --accent:#2563eb; --card:#ffffff; --success:#16a34a; --error:#dc2626; --warn:#d97706; --glass: rgba(0,0,0,0.03);} 
+      }
+      body{font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; margin:0; background:linear-gradient(180deg,var(--bg),#071421); color: #e6eef6;}
+      header{padding:18px 28px; display:flex; align-items:center; justify-content:space-between; gap:12px}
+      h1{margin:0; font-size:18px}
+      main{padding:18px 28px}
+      .grid{display:grid; grid-template-columns: repeat(4, 1fr); gap:12px; margin-bottom:16px}
+      .card{background:var(--panel); padding:14px; border-radius:8px; box-shadow:0 6px 18px rgba(2,6,23,0.6);} 
+      .metric{font-size:20px; font-weight:600}
+      .small{color:var(--muted); font-size:13px}
+      .controls{display:flex; gap:8px; align-items:center}
+      form.filters{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+      input, select{padding:8px 10px; border-radius:6px; border:1px solid rgba(255,255,255,0.04); background:var(--card); color:inherit}
+      button.btn{background:var(--accent); color:white; padding:8px 12px; border-radius:6px; border:none}
+      .layout{display:grid; grid-template-columns: 2fr 1fr; gap:16px}
+      .table-wrap{background:var(--panel); padding:12px; border-radius:8px}
+      table{width:100%; border-collapse:collapse}
+      th, td{padding:8px 10px; text-align:left; font-size:13px}
+      th{color:var(--muted); font-size:12px}
+      tr:nth-child(even){background:transparent}
+      .status{padding:6px 10px; border-radius:999px; font-weight:600; font-size:12px}
+      .status.RUNNING{background:var(--warn); color:#1f2937}
+      .status.SUCCESS{background:var(--success); color:#022c22}
+      .status.ERROR{background:var(--error); color:#2b0505}
+      .timeline{background:var(--panel); padding:12px; border-radius:8px}
+      .timeline .group{padding:8px 0; border-bottom:1px dashed rgba(255,255,255,0.03)}
+      pre{background:var(--glass); padding:10px; border-radius:6px; overflow:auto; color:inherit}
+      .actions{display:flex; gap:8px}
+      @media (max-width:900px){ .grid{grid-template-columns:repeat(2,1fr)} .layout{grid-template-columns:1fr} }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>OportunidadBot — Monitor</h1>
+        <div class="small">Herramienta de observabilidad (in-memory) — Actualiza cada 5s</div>
+      </div>
+      <div class="controls">
+        <form method="get" action="/debug" class="filters">
+          <select name="service">
+            <option value="">Todos servicios</option>
+            {% for t in types %}
+              <option value="{{ t }}" {% if t == selected_service %}selected{% endif %}>{{ t }}</option>
+            {% endfor %}
+          </select>
+          <select name="state">
+            <option value="">Todos estados</option>
+            {% for s in states %}
+              <option value="{{ s }}" {% if s == selected_state %}selected{% endif %}>{{ s }}</option>
+            {% endfor %}
+          </select>
+          <input type="text" name="q" placeholder="Buscar texto..." value="{{ q }}" />
+          <input type="datetime-local" name="date_from" value="{{ date_from }}" />
+          <input type="datetime-local" name="date_to" value="{{ date_to }}" />
+          <button class="btn">Filtrar</button>
+        </form>
+        <div class="actions">
+          <a class="btn" href="/debug/export">Exportar JSON</a>
+          <form method="post" action="/debug/clear" style="display:inline">
+            <button class="btn" type="submit">Vaciar eventos</button>
+          </form>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="grid">
+        <div class="card">
+          <div class="small">Eventos registrados</div>
+          <div class="metric">{{ metrics.total }}</div>
+        </div>
+        <div class="card">
+          <div class="small">Errores</div>
+          <div class="metric">{{ metrics.errors }}</div>
+        </div>
+        <div class="card">
+          <div class="small">Llamadas IA</div>
+          <div class="metric">{{ metrics.ai_calls }}</div>
+        </div>
+        <div class="card">
+          <div class="small">Feeds procesados</div>
+          <div class="metric">{{ metrics.feeds_processed }}</div>
+        </div>
+        <div class="card">
+          <div class="small">Alertas enviadas</div>
+          <div class="metric">{{ metrics.alerts_sent }}</div>
+        </div>
+        <div class="card">
+          <div class="small">Tiempo medio IA (s)</div>
+          <div class="metric">{{ metrics.avg_ai if metrics.avg_ai is not none else '-' }}</div>
+        </div>
+        <div class="card">
+          <div class="small">Tiempo medio RSS (s)</div>
+          <div class="metric">{{ metrics.avg_rss if metrics.avg_rss is not none else '-' }}</div>
+        </div>
+      </section>
+
+      <div class="layout">
+        <div>
+          <div class="table-wrap">
+            <h3>Eventos</h3>
+            <table>
+              <thead>
+                <tr><th>Fecha</th><th>Servicio</th><th>Nombre</th><th>Estado</th><th>Duración</th><th></th></tr>
+              </thead>
+              <tbody>
+                {% for e in events %}
+                <tr>
+                  <td>{{ e.timestamp }}</td>
+                  <td>{{ e.type }}</td>
+                  <td>{{ e.name }}</td>
+                  <td><span class="status {{ e.state }}">{{ e.state }}</span></td>
+                  <td>{{ e.duration if e.duration is not none else '-' }}</td>
+                  <td><a class="btn" href="/debug?event_id={{ e.id }}">Ver</a></td>
+                </tr>
+                {% else %}
+                <tr><td colspan="6">Sin eventos</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+
+          {% if detail %}
+            <div class="card" style="margin-top:12px">
+              <h3>Detalle: {{ detail.name }} ({{ detail.id }})</h3>
+              <div class="small">Payload entrada</div>
+              <pre>{{ detail.input_payload }}</pre>
+              <div class="small">Payload salida</div>
+              <pre>{{ detail.output_payload }}</pre>
+              <div class="small">Metadata</div>
+              <pre>{{ detail.metadata }}</pre>
+              <div class="small">Error</div>
+              <pre>{{ detail.error }}</pre>
+              <div class="small">Traceback</div>
+              <pre>{{ detail.traceback }}</pre>
+            </div>
+          {% endif %}
+        </div>
+
+        <aside>
+          <div class="timeline">
+            <h4>Timeline</h4>
+            {% for group in timeline %}
+              <div class="group">
+                {% if group.scheduler %}
+                  <div style="font-weight:700">Scheduler — {{ group.scheduler.timestamp }}</div>
+                  <div class="small">Feeds: {{ group.scheduler.output_payload.feeds_checked if group.scheduler.output_payload and group.scheduler.output_payload.feeds_checked is defined else '-' }} Alerts: {{ group.scheduler.output_payload.alerts if group.scheduler.output_payload and group.scheduler.output_payload.alerts is defined else '-' }}</div>
+                {% else %}
+                  <div style="font-weight:700">Recent</div>
+                {% endif %}
+                <ul style="margin:8px 0; padding-left:14px">
+                  {% for c in group.children %}
+                    <li style="margin-bottom:6px">{{ c.timestamp }} — <strong>{{ c.type }}</strong> — {{ c.name }} — <span class="status {{ c.state }}">{{ c.state }}</span></li>
+                  {% endfor %}
+                </ul>
+              </div>
+            {% endfor %}
+          </div>
+        </aside>
+      </div>
+    </main>
+  </body>
+</html>

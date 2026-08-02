@@ -101,6 +101,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Debug dashboard routes (optional, powered by app/debug)
+try:
+    from app.debug.routes import router as debug_router  # type: ignore
+    app.include_router(debug_router)
+except Exception:
+    # If tracing package is not available or fails to initialize, skip silently
+    logger.debug("Debug router not available")
+
 # --- Endpoints ---
 
 @app.get("/health")

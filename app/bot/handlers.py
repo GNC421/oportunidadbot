@@ -23,6 +23,8 @@ from app.subscriptions import get_subscription_catalog
 from app.services import feed_parser
 from app.services.source_display_name import SourceDisplayNameService
 from app.sources import SourceFactory
+from app.debug.trace_service import get_trace_service
+from app.debug.trace_models import EventType
 
 MENU_ADD_SOURCE = "menu_add_source"
 MENU_MY_SOURCES = "menu_my_sources"
@@ -989,6 +991,12 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     """Registra errores y notifica al desarrollador (opcional)."""
     logger.debug("Entering error_handler")
     logger.error(f"Excepción mientras se manejaba una actualización: {context.error}")
+    try:
+        trace = get_trace_service()
+        await trace.start(type=EventType.TELEGRAM, name="Handler error", input_payload={"error": str(context.error)})
+        await trace.error("", error=str(context.error))
+    except Exception:
+        pass
     if update and hasattr(update, "message") and update.message:
         await update.message.reply_text("Ocurrió un error inesperado. Por favor, inténtalo de nuevo más tarde.")
 

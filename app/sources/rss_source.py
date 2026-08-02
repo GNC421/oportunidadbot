@@ -4,6 +4,18 @@ from typing import Any, Callable, Optional
 
 from .base import BaseSource
 from .item import Item
+from app.debug.trace_service import get_trace_service
+from app.debug.trace_models import EventType
+import asyncio
+
+
+def _maybe_run_async(coro):
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(coro)
+        return ""
+    except RuntimeError:
+        return asyncio.run(coro)
 
 
 class RSSSource(BaseSource):
@@ -21,8 +33,11 @@ class RSSSource(BaseSource):
         return getattr(parsed_feed, "entries", []) or []
 
     def validate(self) -> dict[str, Any]:
+        trace = get_trace_service()
+        event_id = _maybe_run_async(trace.start(type=EventType.RSS, name="RSS validate", input_payload={"url": self.url}))
         parsed_feed = self._load_parsed_feed()
         if parsed_feed is None:
+            _maybe_run_async(trace.error(event_id, error="no content"))
             return {
                 "valid": False,
                 "error": "No se pudo obtener el contenido del feed",
@@ -46,6 +61,7 @@ class RSSSource(BaseSource):
         entries = self._extract_entries(parsed_feed)
         if not entries:
             self._source_logger().warning("RSS feed has no entries")
+            _maybe_run_async(trace.error(event_id, error="no entries"))
             return {
                 "valid": False,
                 "error": "El feed no tiene entradas disponibles",
@@ -59,6 +75,7 @@ class RSSSource(BaseSource):
             feed_title = feed_data.get("title", "") or ""
 
         self._source_logger().info("RSS source validated", entry_count=len(entries))
+        _maybe_run_async(trace.success(event_id, output_payload={"entry_count": len(entries)}))
         return {
             "valid": True,
             "error": None,
@@ -68,8 +85,11 @@ class RSSSource(BaseSource):
 
     def parse_items(self, limit: int = 10) -> Optional[list[Item]]:
         try:
+            trace = get_trace_service()
+            event_id = _maybe_run_async(trace.start(type=EventType.RSS, name="RSS parse", input_payload={"url": self.url, "limit": limit}))
             parsed_feed = self._load_parsed_feed()
             if parsed_feed is None:
+                _maybe_run_async(trace.error(event_id, error="no content"))
                 return None
 
             if getattr(parsed_feed, "bozo", False):
@@ -77,6 +97,7 @@ class RSSSource(BaseSource):
 
             entries = self._extract_entries(parsed_feed)
             if not entries:
+                _maybe_run_async(trace.error(event_id, error="no entries"))
                 return None
 
             items: list[Item] = []
@@ -93,9 +114,14 @@ class RSSSource(BaseSource):
                 )
 
             self._source_logger().info("RSS source parsed successfully", parsed_entries=len(items))
+            _maybe_run_async(trace.success(event_id, output_payload={"parsed_entries": len(items)}))
             return items
         except Exception as exc:
             self._source_logger().error("Error parsing RSS source", error=str(exc))
+            try:
+                _maybe_run_async(trace.error(event_id, error=str(exc)))
+            except Exception:
+                pass
             return None
 
 
