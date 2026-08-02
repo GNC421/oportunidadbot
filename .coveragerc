@@ -6,6 +6,11 @@ omit =
     app/models.py
     app/bot.py
     app/bot/__init__.py
+    # Exclude in-memory debug/monitoring UI from coverage metrics
+    app/debug/*
+    app/debug/**
+    # Exclude internal logging helpers from coverage
+    app/logging_flow.py
 
 [report]
 show_missing = True
