@@ -3,77 +3,391 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>OportunidadBot — Monitor (simple)</title>
+    <title>OportunidadBot — Debug Dashboard</title>
+    <!--
+      Single-file, self-contained dashboard
+      Contains: HTML, CSS, JS
+    -->
     <style>
-      body{font-family:Arial,Helvetica,sans-serif;background:#0b1220;color:#e6eef6;margin:0;padding:18px}
-      header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
-      .kpi{display:flex;gap:12px;margin-bottom:12px}
-      .kpi div{background:#071421;padding:10px;border-radius:6px}
-      table{width:100%;border-collapse:collapse}
-      th,td{padding:8px;border-bottom:1px solid rgba(255,255,255,0.03);text-align:left}
-      pre{background:#071421;padding:8px;border-radius:6px;overflow:auto}
-      .muted{color:#9aa7b7;font-size:13px}
-      a.btn{background:#7c5cff;color:#071022;padding:6px 10px;border-radius:6px;text-decoration:none}
+      /* ==========================
+         Layout
+         ========================== */
+      :root{
+        --bg:#071017; --panel:#0b1220; --muted:#94a3b8; --accent:#7c5cff; --glass: rgba(255,255,255,0.03);
+        --success:#10b981; --running:#fbbf24; --error:#ef4444; --rss:#3b82f6; --ia:#7c5cff; --telegram:#38bdf8; --database:#065f46; --scheduler:#f97316;
+        --radius:12px; --shadow:0 8px 24px rgba(2,6,23,0.6);
+      }
+      *{box-sizing:border-box}
+      body{margin:0;font-family:Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial;background:linear-gradient(180deg,var(--bg),#031224);color:#e6eef6}
+      .container{max-width:1200px;margin:20px auto;padding:20px}
+      .row{display:flex;gap:16px}
+      .col{flex:1}
+
+      /* ==========================
+         Header
+         ========================== */
+      header.app-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}
+      .brand{display:flex;align-items:center;gap:12px}
+      .logo{width:44px;height:44;border-radius:8px;background:linear-gradient(135deg,var(--accent),#5b8cff);display:flex;align-items:center;justify-content:center;font-weight:800;color:#071022}
+      .brand h1{margin:0;font-size:18px}
+      .header-controls{display:flex;align-items:center;gap:10px}
+      .pill{padding:6px 10px;border-radius:999px;background:rgba(255,255,255,0.02);font-weight:700}
+      .small-muted{color:var(--muted);font-size:13px}
+      .btn{background:var(--accent);border:none;color:#071022;padding:8px 12px;border-radius:10px;cursor:pointer;font-weight:700}
+      .btn.ghost{background:transparent;border:1px solid rgba(255,255,255,0.04);color:var(--muted)}
+
+      /* ==========================
+         Summary / KPIs
+         ========================== */
+      .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:16px}
+      .kpi{background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent);padding:14px;border-radius:var(--radius);box-shadow:var(--shadow);display:flex;align-items:center;gap:12px}
+      .kpi .icon{width:44px;height:44;border-radius:10px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800}
+      .kpi .value{font-size:20px;font-weight:900}
+      .kpi .label{color:var(--muted);font-size:12px}
+
+      /* ==========================
+         Main layout
+         ========================== */
+      .main-grid{display:grid;grid-template-columns:2fr 360px;gap:16px}
+      .panel{background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent);padding:12px;border-radius:12px;box-shadow:var(--shadow)}
+
+      /* ==========================
+         Filters
+         ========================== */
+      .filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+      .filters select,.filters input{background:transparent;border:1px solid rgba(255,255,255,0.04);padding:8px 10px;border-radius:8px;color:inherit}
+
+      /* ==========================
+         Event cards
+         ========================== */
+      .events{display:flex;flex-direction:column;gap:12px}
+      .event-card{display:flex;gap:12px;padding:12px;border-radius:12px;background:linear-gradient(180deg,rgba(255,255,255,0.01),transparent);box-shadow:0 6px 18px rgba(2,6,23,0.5);transition:transform .12s ease,box-shadow .12s ease}
+      .event-card:hover{transform:translateY(-4px);box-shadow:0 14px 34px rgba(2,6,23,0.6)}
+      .event-meta{width:170px;min-width:140px;color:var(--muted);font-size:13px}
+      .event-main{flex:1}
+      .event-title{font-weight:800;margin-bottom:6px}
+      .event-desc{color:var(--muted);font-size:13px}
+      .event-actions{display:flex;gap:8px;align-items:center;margin-top:8px}
+      .badge{padding:6px 10px;border-radius:999px;font-weight:800;font-size:12px}
+      .badge.SUCCESS{background:var(--success);color:#022c22}
+      .badge.RUNNING{background:var(--running);color:#1f2937}
+      .badge.ERROR{background:var(--error);color:#2b0505}
+
+      /* ==========================
+         Detail blocks
+         ========================== */
+      .detail{margin-top:10px;padding:12px;border-radius:8px;background:rgba(255,255,255,0.02);font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:13px}
+      .detail pre{white-space:pre-wrap;word-break:break-word;background:rgba(0,0,0,0.25);padding:10px;border-radius:8px;color:#e6eef6}
+      .copy-btn{background:transparent;border:1px solid rgba(255,255,255,0.04);padding:6px 8px;border-radius:8px;color:var(--muted);cursor:pointer}
+
+      /* ==========================
+         Timeline
+         ========================== */
+      .timeline{display:flex;flex-direction:column;gap:12px}
+      .t-item{display:flex;gap:8px;align-items:center}
+      .t-line{width:2px;height:40px;background:rgba(255,255,255,0.04);margin-left:10px}
+
+      /* ==========================
+         Footer / small
+         ========================== */
+      .muted{color:var(--muted)}
+
+      /* ==========================
+         Responsive
+         ========================== */
+      @media (max-width:980px){.main-grid{grid-template-columns:1fr}.event-meta{display:none}}
     </style>
   </head>
   <body>
-    <header>
-      <div>
-        <h1>OportunidadBot — Monitor</h1>
-        <div class="muted">Herramienta de observabilidad (versión simple)</div>
-      </div>
-      <div>
-        <a class="btn" href="/debug/export">Exportar JSON</a>
-        <form method="post" action="/debug/clear" style="display:inline">
-          <button style="margin-left:8px" type="submit">Vaciar eventos</button>
+    <div class="container">
+      <!-- HEADER -->
+      <header class="app-header">
+        <div class="brand">
+          <div class="logo">OB</div>
+          <div>
+            <h1>OportunidadBot</h1>
+            <div class="small-muted">Monitor de ejecución</div>
+          </div>
+        </div>
+        <div class="header-controls">
+          <div class="pill">Estado: <strong id="sys-state">OK</strong></div>
+          <div class="small-muted" id="last-updated">Última actualización: --</div>
+          <button class="btn" id="btn-refresh">Actualizar</button>
+          <form method="post" action="/debug/clear" style="display:inline">
+            <button class="btn" type="submit">Vaciar eventos</button>
+          </form>
+        </div>
+      </header>
+
+      <!-- SUMMARY -->
+      <section class="kpis">
+        <div class="kpi">
+          <div class="icon" style="background:rgba(255,255,255,0.06)">E</div>
+          <div>
+            <div class="label">Eventos registrados</div>
+            <div class="value">{{ metrics.total }}</div>
+          </div>
+        </div>
+        <div class="kpi">
+          <div class="icon" style="background:var(--error)">!</div>
+          <div>
+            <div class="label">Errores</div>
+            <div class="value">{{ metrics.errors }}</div>
+          </div>
+        </div>
+        <div class="kpi">
+          <div class="icon" style="background:var(--rss)">R</div>
+          <div>
+            <div class="label">RSS procesados</div>
+            <div class="value">{{ metrics.feeds_processed }}</div>
+          </div>
+        </div>
+        <div class="kpi">
+          <div class="icon" style="background:var(--ia)">AI</div>
+          <div>
+            <div class="label">Llamadas IA</div>
+            <div class="value">{{ metrics.ai_calls }}</div>
+          </div>
+        </div>
+        <div class="kpi">
+          <div class="icon" style="background:rgba(255,255,255,0.06)">A</div>
+          <div>
+            <div class="label">Alertas enviadas</div>
+            <div class="value">{{ metrics.alerts_sent }}</div>
+          </div>
+        </div>
+        <div class="kpi">
+          <div class="icon" style="background:rgba(255,255,255,0.06)">T</div>
+          <div>
+            <div class="label">Tiempo medio IA (s)</div>
+            <div class="value">{{ metrics.avg_ai if metrics.avg_ai is not none else '-' }}</div>
+          </div>
+        </div>
+        <div class="kpi">
+          <div class="icon" style="background:rgba(255,255,255,0.06)">T</div>
+          <div>
+            <div class="label">Tiempo medio RSS (s)</div>
+            <div class="value">{{ metrics.avg_rss if metrics.avg_rss is not none else '-' }}</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- FILTERS -->
+      <div class="panel filters">
+        <form id="server-filters" method="get" action="/debug" style="display:flex;flex:1;gap:8px;align-items:center;flex-wrap:wrap">
+          <select name="state" id="filter-state">
+            <option value="">Todos estados</option>
+            {% for s in states %}
+              <option value="{{ s }}" {% if s == selected_state %}selected{% endif %}>{{ s }}</option>
+            {% endfor %}
+          </select>
+          <select name="service" id="filter-service">
+            <option value="">Todos servicios</option>
+            {% for t in types %}
+              <option value="{{ t }}" {% if t == selected_service %}selected{% endif %}>{{ t }}</option>
+            {% endfor %}
+          </select>
+          <input type="text" id="filter-text" name="q" placeholder="Buscar título, feed, respuesta..." value="{{ q }}" />
+          <input type="text" id="filter-model" placeholder="Modelo IA (cliente)" />
+          <button class="btn" type="submit">Aplicar (server)</button>
+          <button class="btn ghost" type="button" id="btn-reset">Reset</button>
+          <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+            <div class="small-muted" id="auto-refresh-counter">Actualizando en: 5s</div>
+            <button class="btn ghost" id="btn-pause">Pausar</button>
+          </div>
         </form>
       </div>
-    </header>
 
-    <section class="kpi">
-      <div><div class="muted">Eventos</div><div style="font-weight:800">{{ metrics.total }}</div></div>
-      <div><div class="muted">Errores</div><div style="font-weight:800">{{ metrics.errors }}</div></div>
-      <div><div class="muted">RSS procesados</div><div style="font-weight:800">{{ metrics.feeds_processed }}</div></div>
-      <div><div class="muted">Llamadas IA</div><div style="font-weight:800">{{ metrics.ai_calls }}</div></div>
-    </section>
+      <div class="main-grid" style="margin-top:12px">
+        <!-- EVENTS -->
+        <section class="col">
+          <div class="panel">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+              <h3 style="margin:0">Eventos</h3>
+              <div class="small-muted">Mostrando <span id="visible-count">{{ events|length }}</span> / {{ events|length }}</div>
+            </div>
+            <div class="events" id="events-list">
+              {% for e in events %}
+                <article class="event-card" data-id="{{ e.id }}" data-type="{{ e.type }}" data-state="{{ e.state }}" data-name="{{ e.name }}" data-metadata='{{ e.metadata | tojson | safe }}'>
+                  <div class="event-meta">
+                    <div class="muted">{{ e.timestamp }}</div>
+                    <div class="muted">{{ e.type }}</div>
+                    <div class="muted">Duración: {{ e.duration if e.duration is not none else '-' }}</div>
+                  </div>
+                  <div class="event-main">
+                    <div class="event-title">{{ e.name }}</div>
+                    <div class="event-desc">{{ (e.input_payload | tojson) | truncate(180) }}</div>
+                    <div class="event-actions">
+                      <div class="badge {{ e.state }}">{{ e.state }}</div>
+                      <button class="btn.ghost btn ghost btn-expand" data-target="detail-{{ e.id }}">Expandir</button>
+                    </div>
+                    <div class="detail" id="detail-{{ e.id }}" style="display:none">
+                      <div style="display:flex;gap:12px;flex-wrap:wrap">
+                        <div style="flex:1;min-width:260px">
+                          <div class="muted">Prompt enviado</div>
+                          <pre>{{ (e.metadata.prompt if e.metadata and e.metadata.prompt is defined else '') | default('') }}</pre>
+                          <button class="copy-btn" data-target="detail-{{ e.id }}-prompt">Copiar</button>
+                        </div>
+                        <div style="flex:1;min-width:260px">
+                          <div class="muted">Payload entrada</div>
+                          <pre id="in-{{ e.id }}">{{ e.input_payload | tojson(indent=2) | default('') }}</pre>
+                          <button class="copy-btn" data-target="in-{{ e.id }}">Copiar</button>
+                        </div>
+                        <div style="flex:1;min-width:260px">
+                          <div class="muted">Payload salida</div>
+                          <pre id="out-{{ e.id }}">{{ e.output_payload | tojson(indent=2) | default('') }}</pre>
+                          <button class="copy-btn" data-target="out-{{ e.id }}">Copiar</button>
+                        </div>
+                      </div>
+                      <div style="margin-top:8px">
+                        <div class="muted">Respuesta IA</div>
+                        <pre id="resp-{{ e.id }}">{{ (e.metadata.response if e.metadata and e.metadata.response is defined else '') | default('') }}</pre>
+                      </div>
+                      <div style="margin-top:8px">
+                        <div class="muted">Resultado parseado</div>
+                        <pre id="parsed-{{ e.id }}">{{ (e.metadata.parsed if e.metadata and e.metadata.parsed is defined else '') | tojson(indent=2) | default('') }}</pre>
+                      </div>
+                      <div style="margin-top:8px">
+                        <div class="muted">Error / Traceback</div>
+                        <pre id="err-{{ e.id }}">{{ (e.error | default('')) + '\n' + (e.traceback | default('')) }}</pre>
+                        <button class="copy-btn" data-target="err-{{ e.id }}">Copiar</button>
+                      </div>
+                    </div>
+                  </div>
+                </article>
+              {% endfor %}
+            </div>
+          </div>
+        </section>
 
-    <section style="margin-bottom:12px">
-      <form method="get" action="/debug">
-        <label class="muted">Estado: <select name="state"><option value="">Todos</option>{% for s in states %}<option value="{{ s }}" {% if s == selected_state %}selected{% endif %}>{{ s }}</option>{% endfor %}</select></label>
-        <label class="muted" style="margin-left:12px">Servicio: <select name="service"><option value="">Todos</option>{% for t in types %}<option value="{{ t }}" {% if t == selected_service %}selected{% endif %}>{{ t }}</option>{% endfor %}</select></label>
-        <label class="muted" style="margin-left:12px">Buscar: <input type="text" name="q" value="{{ q }}" /></label>
-        <button type="submit" style="margin-left:8px">Aplicar</button>
-      </form>
-    </section>
-
-    <section>
-      <h2>Eventos</h2>
-      <table>
-        <thead><tr><th>Fecha</th><th>Servicio</th><th>Nombre</th><th>Estado</th><th>Duración</th><th></th></tr></thead>
-        <tbody>
-          {% for e in events %}
-            <tr>
-              <td>{{ e.timestamp }}</td>
-              <td>{{ e.type }}</td>
-              <td>{{ e.name }}</td>
-              <td>{{ e.state }}</td>
-              <td>{{ e.duration if e.duration is not none else '-' }}</td>
-              <td><a href="/debug?event_id={{ e.id }}" class="muted">Ver</a></td>
-            </tr>
-            {% if event_id and event_id == e.id %}
-              <tr><td colspan="6"><strong>Detalle:</strong>
-                <div style="display:flex;gap:12px;margin-top:8px">
-                  <div style="flex:1"><div class="muted">Payload entrada</div><pre>{{ e.input_payload | tojson(indent=2) | default('') }}</pre></div>
-                  <div style="flex:1"><div class="muted">Payload salida</div><pre>{{ e.output_payload | tojson(indent=2) | default('') }}</pre></div>
+        <!-- TIMELINE -->
+        <aside>
+          <div class="panel timeline">
+            <h4>Timeline</h4>
+            {% for group in timeline %}
+              <div style="margin-bottom:8px">
+                {% if group.scheduler %}
+                  <div class="t-item"><div style="width:10px;height:10px;border-radius:3px;background:var(--scheduler)"></div><div style="margin-left:6px"><strong>Scheduler</strong><div class="muted">{{ group.scheduler.timestamp }}</div></div></div>
+                {% else %}
+                  <div class="t-item"><div style="width:10px;height:10px;border-radius:3px;background:rgba(255,255,255,0.04)"></div><div style="margin-left:6px"><strong>Recent</strong></div></div>
+                {% endif %}
+                <div style="margin-left:14px;margin-top:6px">
+                  {% for c in group.children %}
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><div style="width:8px;height:8px;border-radius:2px;background:rgba(255,255,255,0.04)"></div><div><strong>{{ c.type }}</strong> — <span class="muted">{{ c.name }}</span></div></div>
+                  {% endfor %}
                 </div>
-                <div style="margin-top:8px"><div class="muted">Error / Traceback</div><pre>{{ (e.error | default('')) + '\n' + (e.traceback | default('')) }}</pre></div>
-              </td></tr>
-            {% endif %}
-          {% else %}
-            <tr><td colspan="6" class="muted">Sin eventos</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </section>
+              </div>
+            {% endfor %}
+          </div>
+        </aside>
+      </div>
+
+      <!-- FOOTER -->
+      <footer style="margin-top:18px;text-align:center" class="muted">OportunidadBot — Monitor</footer>
+
+    </div>
+
+    <!-- ==========================
+         Javascript (inline, vanilla)
+         ========================== -->
+    <script>
+      // ===== Auto Refresh =====
+      (function(){
+        const INTERVAL = 5; // seconds
+        let remaining = INTERVAL;
+        let paused = false;
+        const counterEl = document.getElementById('auto-refresh-counter');
+        const lastUpdatedEl = document.getElementById('last-updated');
+        const btnPause = document.getElementById('btn-pause');
+        const btnRefresh = document.getElementById('btn-refresh');
+
+        function updateCounter(){
+          if(!counterEl) return;
+          counterEl.textContent = paused ? 'Auto-refresh: Pausado' : `Actualizando en: ${remaining}s`;
+        }
+
+        function tick(){
+          if(paused) return;
+          remaining -= 1;
+          if(remaining <= 0){ location.reload(); return; }
+          updateCounter();
+        }
+
+        setInterval(tick, 1000);
+        updateCounter();
+
+        btnPause && btnPause.addEventListener('click', ()=>{ paused = !paused; btnPause.textContent = paused ? 'Reanudar' : 'Pausar'; updateCounter(); });
+        btnRefresh && btnRefresh.addEventListener('click', ()=> location.reload());
+
+        // set last-updated to now initially
+        if(lastUpdatedEl){ const d = new Date(); lastUpdatedEl.textContent = 'Última actualización: ' + d.toLocaleString(); }
+      })();
+
+      // ===== Filters (client-side) =====
+      (function(){
+        const list = document.getElementById('events-list');
+        const items = list ? Array.from(list.querySelectorAll('.event-card')) : [];
+        const inText = document.getElementById('filter-text');
+        const inState = document.getElementById('filter-state');
+        const inService = document.getElementById('filter-service');
+        const inModel = document.getElementById('filter-model');
+        const visibleCount = document.getElementById('visible-count');
+
+        function matchItem(item){
+          const state = inState ? inState.value : '';
+          const serv = inService ? inService.value : '';
+          const q = inText ? inText.value.trim().toLowerCase() : '';
+          const model = inModel ? inModel.value.trim().toLowerCase() : '';
+          if(state && item.dataset.state !== state) return false;
+          if(serv && item.dataset.type !== serv) return false;
+          if(model){
+            try{ const md = JSON.parse(item.dataset.metadata || '{}'); const m = (md.model || md.model_name || '').toString().toLowerCase(); if(!m.includes(model)) return false; }catch(e){}
+          }
+          if(q){
+            const hay = (item.dataset.name+' '+item.dataset.type+' '+(item.dataset.metadata||'')).toLowerCase();
+            if(!hay.includes(q)) return false;
+          }
+          return true;
+        }
+
+        function applyFilters(){
+          let visible = 0;
+          items.forEach(i=>{
+            const ok = matchItem(i);
+            i.style.display = ok ? '' : 'none';
+            if(ok) visible++;
+          });
+          if(visibleCount) visibleCount.textContent = visible;
+        }
+
+        [inText, inState, inService, inModel].forEach(el=>{ if(!el) return; el.addEventListener('input', ()=>{ applyFilters(); }); });
+        // init
+        applyFilters();
+      })();
+
+      // ===== Expand / Copy =====
+      (function(){
+        function $all(sel, r=document){return Array.from(r.querySelectorAll(sel))}
+        $all('.btn.expand, .btn-expand').forEach(b=>{ /* backward compat */ });
+        $all('.btn.ghost, .btn-ghost');
+
+        // expand buttons
+        $all('.btn-expand').forEach(b=>{
+          b.addEventListener('click', ()=>{
+            const id = b.dataset.target; const el = document.getElementById(id);
+            if(!el) return; el.style.display = el.style.display === 'none' ? 'block' : 'none'; if(el.style.display!=='none') el.scrollIntoView({behavior:'smooth',block:'center'});
+          });
+        });
+
+        // copy buttons
+        $all('.copy-btn').forEach(b=>{
+          b.addEventListener('click', (ev)=>{
+            const tgt = ev.currentTarget.dataset.target; const el = document.getElementById(tgt);
+            if(!el) return; const txt = el.textContent || '';
+            navigator.clipboard.writeText(txt).then(()=>{ const prev = b.textContent; b.textContent='Copiado'; setTimeout(()=>b.textContent=prev,1000); }).catch(()=>alert('No se pudo copiar'));
+          });
+        });
+      })();
+    </script>
   </body>
 </html>
