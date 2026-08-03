@@ -15,13 +15,6 @@
         <div class="logo">OportunidadBot</div>
         <nav>
           <div class="nav-item">Dashboard</div>
-          <div class="nav-item">IA</div>
-          <div class="nav-item">RSS</div>
-          <div class="nav-item">Telegram</div>
-          <div class="nav-item">Supabase</div>
-          <div class="nav-item">Scheduler</div>
-          <div class="nav-item">General</div>
-          <div class="nav-item">Configuración</div>
         </nav>
       </aside>
 
@@ -30,7 +23,6 @@
           <div class="header-left">
             <h1>OportunidadBot — Monitor</h1>
             <div class="status-pill">Estado: <strong class="muted">OK</strong></div>
-            <div class="muted">Última actualización: {{ metrics.last_update if metrics.last_update is defined else '-' }}</div>
           </div>
           <div class="header-actions">
             <a class="btn ghost" href="/debug/export">Exportar JSON</a>
@@ -95,16 +87,15 @@
                   </div>
                   <div class="event-main">
                     <div class="event-title">{{ e.name }}</div>
-                    <div class="event-sub">{{ e.summary if e.summary is defined else (e.input_payload[:120] if e.input_payload else '') }}</div>
+                    <div class="event-sub">{{ e.summary if e.summary is defined else (e.input_payload | tojson | truncate(120)) }}</div>
                     <div style="margin-top:8px" class="event-actions">
                       <div class="badge {{ e.state }}">{{ e.state }}</div>
                       <button class="btn ghost btn-expand">Expandir</button>
                     </div>
                     <div class="detail" style="display: {% if event_id and event_id == e.id %}block{% else %}none{% endif %};">
-                      <div><strong>Prompt</strong><pre id="prompt-{{ e.id }}">{{ e.prompt if e.prompt is defined else '' }}</pre><button class="copy-btn" data-target="prompt-{{ e.id }}">Copiar</button></div>
-                      <div style="margin-top:8px"><strong>Payload entrada</strong><pre id="in-{{ e.id }}">{{ e.input_payload }}</pre><button class="copy-btn" data-target="in-{{ e.id }}">Copiar</button></div>
-                      <div style="margin-top:8px"><strong>Payload salida</strong><pre id="out-{{ e.id }}">{{ e.output_payload }}</pre><button class="copy-btn" data-target="out-{{ e.id }}">Copiar</button></div>
-                      <div style="margin-top:8px"><strong>Error / Traceback</strong><pre id="err-{{ e.id }}">{{ e.error }}\n{{ e.traceback }}</pre><button class="copy-btn" data-target="err-{{ e.id }}">Copiar</button></div>
+                      <div style="margin-top:8px"><strong>Payload entrada</strong><pre id="in-{{ e.id }}">{{ e.input_payload | tojson(indent=2) | default('') }}</pre><button class="copy-btn" data-target="in-{{ e.id }}">Copiar</button></div>
+                      <div style="margin-top:8px"><strong>Payload salida</strong><pre id="out-{{ e.id }}">{{ e.output_payload | tojson(indent=2) | default('') }}</pre><button class="copy-btn" data-target="out-{{ e.id }}">Copiar</button></div>
+                      <div style="margin-top:8px"><strong>Error / Traceback</strong><pre id="err-{{ e.id }}">{{ (e.error | default('')) + '\n' + (e.traceback | default('')) }}</pre><button class="copy-btn" data-target="err-{{ e.id }}">Copiar</button></div>
                     </div>
                   </div>
                 </article>
