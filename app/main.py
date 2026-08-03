@@ -17,7 +17,6 @@ from .subscriptions.entities import Plan
 from fastapi import Depends
 from fastapi.security import APIKeyHeader
 from app.services.ai_classifier import classifier
-from fastapi.staticfiles import StaticFiles
 
 # Variable global para mantener la aplicación del bot
 bot_app: Application = None
@@ -111,8 +110,6 @@ app = FastAPI(
 # Debug dashboard routes (optional, powered by app/debug)
 try:
     from app.debug.routes import router as debug_router  # type: ignore
-    # Mount static files for the debug UI
-    app.mount("/static", StaticFiles(directory="app/static"), name="static")
     app.include_router(debug_router)
 except Exception:
     # If tracing package is not available or fails to initialize, skip silently

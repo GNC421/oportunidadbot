@@ -2,141 +2,78 @@
 <html lang="es">
   <head>
     <meta charset="utf-8" />
-    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="robots" content="noindex">
-    <title>OportunidadBot — Monitor</title>
-    <link rel="stylesheet" href="/static/css/debug.css">
-    <script defer src="/static/js/debug.js"></script>
+    <title>OportunidadBot — Monitor (simple)</title>
+    <style>
+      body{font-family:Arial,Helvetica,sans-serif;background:#0b1220;color:#e6eef6;margin:0;padding:18px}
+      header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+      .kpi{display:flex;gap:12px;margin-bottom:12px}
+      .kpi div{background:#071421;padding:10px;border-radius:6px}
+      table{width:100%;border-collapse:collapse}
+      th,td{padding:8px;border-bottom:1px solid rgba(255,255,255,0.03);text-align:left}
+      pre{background:#071421;padding:8px;border-radius:6px;overflow:auto}
+      .muted{color:#9aa7b7;font-size:13px}
+      a.btn{background:#7c5cff;color:#071022;padding:6px 10px;border-radius:6px;text-decoration:none}
+    </style>
   </head>
   <body>
-    <div class="app-root">
-      <aside class="sidebar" role="navigation" aria-label="Main">
-        <div class="logo">OportunidadBot</div>
-        <nav>
-          <div class="nav-item">Dashboard</div>
-        </nav>
-      </aside>
+    <header>
+      <div>
+        <h1>OportunidadBot — Monitor</h1>
+        <div class="muted">Herramienta de observabilidad (versión simple)</div>
+      </div>
+      <div>
+        <a class="btn" href="/debug/export">Exportar JSON</a>
+        <form method="post" action="/debug/clear" style="display:inline">
+          <button style="margin-left:8px" type="submit">Vaciar eventos</button>
+        </form>
+      </div>
+    </header>
 
-      <main class="main">
-        <header class="header">
-          <div class="header-left">
-            <h1>OportunidadBot — Monitor</h1>
-            <div class="status-pill">Estado: <strong class="muted">OK</strong></div>
-          </div>
-          <div class="header-actions">
-            <a class="btn ghost" href="/debug/export">Exportar JSON</a>
-            <form method="post" action="/debug/clear" style="display:inline">
-              <button class="btn" type="submit">Vaciar eventos</button>
-            </form>
-          </div>
-        </header>
+    <section class="kpi">
+      <div><div class="muted">Eventos</div><div style="font-weight:800">{{ metrics.total }}</div></div>
+      <div><div class="muted">Errores</div><div style="font-weight:800">{{ metrics.errors }}</div></div>
+      <div><div class="muted">RSS procesados</div><div style="font-weight:800">{{ metrics.feeds_processed }}</div></div>
+      <div><div class="muted">Llamadas IA</div><div style="font-weight:800">{{ metrics.ai_calls }}</div></div>
+    </section>
 
-        <section class="kpi-grid">
-          <div class="kpi"><div style="display:flex;justify-content:space-between;align-items:center"><div>
-            <div class="label">Eventos registrados</div>
-            <div class="value">{{ metrics.total }}</div>
-          </div><div class="icon" style="background:rgba(255,255,255,0.06)">E</div></div></div>
-          <div class="kpi"><div>
-            <div class="label">Errores</div>
-            <div class="value">{{ metrics.errors }}</div>
-          </div><div class="icon" style="background:var(--error)">!</div></div>
-          <div class="kpi"><div>
-            <div class="label">RSS procesados</div>
-            <div class="value">{{ metrics.feeds_processed }}</div>
-          </div><div class="icon" style="background:var(--rss)">R</div></div>
-          <div class="kpi"><div>
-            <div class="label">Llamadas IA</div>
-            <div class="value">{{ metrics.ai_calls }}</div>
-          </div><div class="icon" style="background:var(--ia)">AI</div></div>
-          <div class="kpi"><div>
-            <div class="label">Alertas enviadas</div>
-            <div class="value">{{ metrics.alerts_sent }}</div>
-          </div><div class="icon" style="background:rgba(255,255,255,0.06)">A</div></div>
-          <div class="kpi"><div>
-            <div class="label">Tiempo medio IA (s)</div>
-            <div class="value">{{ metrics.avg_ai if metrics.avg_ai is not none else '-' }}</div>
-          </div><div class="icon" style="background:rgba(255,255,255,0.06)">T</div></div>
-          <div class="kpi"><div>
-            <div class="label">Tiempo medio RSS (s)</div>
-            <div class="value">{{ metrics.avg_rss if metrics.avg_rss is not none else '-' }}</div>
-          </div><div class="icon" style="background:rgba(255,255,255,0.06)">T</div></div>
-        </section>
+    <section style="margin-bottom:12px">
+      <form method="get" action="/debug">
+        <label class="muted">Estado: <select name="state"><option value="">Todos</option>{% for s in states %}<option value="{{ s }}" {% if s == selected_state %}selected{% endif %}>{{ s }}</option>{% endfor %}</select></label>
+        <label class="muted" style="margin-left:12px">Servicio: <select name="service"><option value="">Todos</option>{% for t in types %}<option value="{{ t }}" {% if t == selected_service %}selected{% endif %}>{{ t }}</option>{% endfor %}</select></label>
+        <label class="muted" style="margin-left:12px">Buscar: <input type="text" name="q" value="{{ q }}" /></label>
+        <button type="submit" style="margin-left:8px">Aplicar</button>
+      </form>
+    </section>
 
-        <section class="filters">
-          <form method="get" action="/debug" class="filters">
-            <select name="state"><option value="">Todos estados</option>{% for s in states %}<option value="{{ s }}" {% if s == selected_state %}selected{% endif %}>{{ s }}</option>{% endfor %}</select>
-            <select name="service"><option value="">Todos servicios</option>{% for t in types %}<option value="{{ t }}" {% if t == selected_service %}selected{% endif %}>{{ t }}</option>{% endfor %}</select>
-            <input class="search" type="text" name="q" placeholder="Buscar título, feed, prompt..." value="{{ q }}" />
-            <input type="datetime-local" name="date_from" value="{{ date_from }}" />
-            <input type="datetime-local" name="date_to" value="{{ date_to }}" />
-            <button class="btn">Aplicar</button>
-            <a class="btn ghost" href="/debug">Reset</a>
-          </form>
-        </section>
-
-        <div class="layout">
-          <div>
-            <div class="events-list">
-              {% for e in events %}
-                <article class="event-card" data-id="{{ e.id }}">
-                  <div class="event-meta">
-                    <div class="muted">{{ e.timestamp }}</div>
-                    <div class="muted">{{ e.type }}</div>
-                    <div class="muted">Duración: {{ e.duration if e.duration is not none else '-' }}</div>
-                  </div>
-                  <div class="event-main">
-                    <div class="event-title">{{ e.name }}</div>
-                    <div class="event-sub">{{ e.summary if e.summary is defined else (e.input_payload | tojson | truncate(120)) }}</div>
-                    <div style="margin-top:8px" class="event-actions">
-                      <div class="badge {{ e.state }}">{{ e.state }}</div>
-                      <button class="btn ghost btn-expand">Expandir</button>
-                    </div>
-                    <div class="detail" style="display: {% if event_id and event_id == e.id %}block{% else %}none{% endif %};">
-                      <div style="margin-top:8px"><strong>Payload entrada</strong><pre id="in-{{ e.id }}">{{ e.input_payload | tojson(indent=2) | default('') }}</pre><button class="copy-btn" data-target="in-{{ e.id }}">Copiar</button></div>
-                      <div style="margin-top:8px"><strong>Payload salida</strong><pre id="out-{{ e.id }}">{{ e.output_payload | tojson(indent=2) | default('') }}</pre><button class="copy-btn" data-target="out-{{ e.id }}">Copiar</button></div>
-                      <div style="margin-top:8px"><strong>Error / Traceback</strong><pre id="err-{{ e.id }}">{{ (e.error | default('')) + '\n' + (e.traceback | default('')) }}</pre><button class="copy-btn" data-target="err-{{ e.id }}">Copiar</button></div>
-                    </div>
-                  </div>
-                </article>
-              {% else %}
-                <div class="muted">Sin eventos</div>
-              {% endfor %}
-            </div>
-
-            {% if detail %}
-              <section style="margin-top:12px">
-                <h3>Detalle: {{ detail.name }} ({{ detail.id }})</h3>
-                <div class="detail"><strong>Input</strong><pre id="detail-in">{{ detail.input_payload }}</pre></div>
-                <div class="detail" style="margin-top:8px"><strong>Output</strong><pre id="detail-out">{{ detail.output_payload }}</pre></div>
-              </section>
-            {% endif %}
-          </div>
-
-          <aside>
-            <div class="timeline">
-              <h4>Timeline</h4>
-              {% for group in timeline %}
-                <div class="step">
-                  {% if group.scheduler %}
-                    <div style="width:12px;height:12px;border-radius:3px;background:var(--scheduler)"></div>
-                    <div><strong>Scheduler</strong><div class="muted">{{ group.scheduler.timestamp }}</div></div>
-                  {% else %}
-                    <div style="width:12px;height:12px;border-radius:3px;background:rgba(255,255,255,0.04)"></div>
-                    <div><strong>Recent</strong></div>
-                  {% endif %}
+    <section>
+      <h2>Eventos</h2>
+      <table>
+        <thead><tr><th>Fecha</th><th>Servicio</th><th>Nombre</th><th>Estado</th><th>Duración</th><th></th></tr></thead>
+        <tbody>
+          {% for e in events %}
+            <tr>
+              <td>{{ e.timestamp }}</td>
+              <td>{{ e.type }}</td>
+              <td>{{ e.name }}</td>
+              <td>{{ e.state }}</td>
+              <td>{{ e.duration if e.duration is not none else '-' }}</td>
+              <td><a href="/debug?event_id={{ e.id }}" class="muted">Ver</a></td>
+            </tr>
+            {% if event_id and event_id == e.id %}
+              <tr><td colspan="6"><strong>Detalle:</strong>
+                <div style="display:flex;gap:12px;margin-top:8px">
+                  <div style="flex:1"><div class="muted">Payload entrada</div><pre>{{ e.input_payload | tojson(indent=2) | default('') }}</pre></div>
+                  <div style="flex:1"><div class="muted">Payload salida</div><pre>{{ e.output_payload | tojson(indent=2) | default('') }}</pre></div>
                 </div>
-                <div class="line"></div>
-                <ul style="margin:8px 0;padding-left:14px">
-                  {% for c in group.children %}
-                    <li class="muted">{{ c.timestamp }} — <strong>{{ c.type }}</strong> — {{ c.name }} — <span class="badge {{ c.state }}">{{ c.state }}</span></li>
-                  {% endfor %}
-                </ul>
-              {% endfor %}
-            </div>
-          </aside>
-        </div>
-      </main>
-    </div>
+                <div style="margin-top:8px"><div class="muted">Error / Traceback</div><pre>{{ (e.error | default('')) + '\n' + (e.traceback | default('')) }}</pre></div>
+              </td></tr>
+            {% endif %}
+          {% else %}
+            <tr><td colspan="6" class="muted">Sin eventos</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
   </body>
 </html>
