@@ -63,6 +63,12 @@ async def lifespan(app: FastAPI):
         await bot_app.initialize()
         await bot_app.start()
         logger.debug("Telegram application initialized in polling mode")
+        # Ensure any webhook is removed so polling won't conflict with an existing webhook
+        try:
+            await bot_app.bot.delete_webhook()
+            logger.debug("Deleted existing Telegram webhook to enable polling")
+        except Exception:
+            logger.debug("No webhook to delete or failed to delete webhook (continuing)")
         # Iniciar polling en una tarea asíncrona para no bloquear el servidor
         asyncio.create_task(bot_app.updater.start_polling())
         logger.info("📡 Polling iniciado en segundo plano")
