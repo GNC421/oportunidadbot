@@ -8,12 +8,12 @@
     <title>OportunidadBot — Monitor</title>
     <style>
       :root{
-        --bg:#0f1724; --panel:#0b1220; --muted:#94a3b8; --accent:#60a5fa; --card:#071025; --success:#10b981; --error:#ef4444; --warn:#f59e0b; --glass: rgba(255,255,255,0.04);
+        --bg:#071022; --panel:#071421; --muted:#cbd5e1; --accent:#3b82f6; --card:#0b1220; --success:#10b981; --error:#ef4444; --warn:#f59e0b; --glass: rgba(255,255,255,0.04);
       }
       @media (prefers-color-scheme: light){
         :root{ --bg:#f6f8fb; --panel:#ffffff; --muted:#475569; --accent:#2563eb; --card:#ffffff; --success:#16a34a; --error:#dc2626; --warn:#d97706; --glass: rgba(0,0,0,0.03);} 
       }
-      body{font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; margin:0; background:linear-gradient(180deg,var(--bg),#071421); color: #e6eef6;}
+      body{font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; margin:0; background:linear-gradient(180deg,var(--bg),#031224); color: #f8fafc;}
       header{padding:18px 28px; display:flex; align-items:center; justify-content:space-between; gap:12px}
       h1{margin:0; font-size:18px}
       main{padding:18px 28px}
@@ -23,19 +23,20 @@
       .small{color:var(--muted); font-size:13px}
       .controls{display:flex; gap:8px; align-items:center}
       form.filters{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
-      input, select{padding:8px 10px; border-radius:6px; border:1px solid rgba(255,255,255,0.04); background:var(--card); color:inherit}
-      button.btn{background:var(--accent); color:white; padding:8px 12px; border-radius:6px; border:none}
+      input, select{padding:8px 10px; border-radius:6px; border:1px solid rgba(255,255,255,0.08); background:#0f1724; color:#f8fafc}
+      button.btn{background:var(--accent); color:white; padding:8px 12px; border-radius:6px; border:none; font-weight:600}
       .layout{display:grid; grid-template-columns: 2fr 1fr; gap:16px}
-      .table-wrap{background:var(--panel); padding:12px; border-radius:8px}
+      .table-wrap{background:var(--panel); padding:12px; border-radius:8px; color: #f8fafc}
       table{width:100%; border-collapse:collapse}
       th, td{padding:8px 10px; text-align:left; font-size:13px}
       th{color:var(--muted); font-size:12px}
+      a.btn{color:white; text-decoration:none}
       tr:nth-child(even){background:transparent}
       .status{padding:6px 10px; border-radius:999px; font-weight:600; font-size:12px}
       .status.RUNNING{background:var(--warn); color:#1f2937}
       .status.SUCCESS{background:var(--success); color:#022c22}
       .status.ERROR{background:var(--error); color:#2b0505}
-      .timeline{background:var(--panel); padding:12px; border-radius:8px}
+      .timeline{background:var(--panel); padding:12px; border-radius:8px; color:#f8fafc}
       .timeline .group{padding:8px 0; border-bottom:1px dashed rgba(255,255,255,0.03)}
       pre{background:var(--glass); padding:10px; border-radius:6px; overflow:auto; color:inherit}
       .actions{display:flex; gap:8px}

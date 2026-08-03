@@ -3,9 +3,11 @@
 Provides a richer monitoring view: metrics, timeline, search, export and clear.
 """
 from __future__ import annotations
-from fastapi import APIRouter, Request, Form
+from fastapi import APIRouter, Request, Form, Depends, HTTPException, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+import os
+import base64
 from typing import Optional
 import json
 from datetime import datetime
@@ -69,8 +71,33 @@ def _filter_events(events, state=None, service=None, q=None, date_from=None, dat
     return out
 
 
+def _require_admin(request: Request) -> None:
+    """Simple HTTP Basic auth using ADMIN_USERNAME / ADMIN_PASSWORD env vars.
+
+    Raises 401 if missing or invalid.
+    """
+    auth = request.headers.get("authorization")
+    if not auth:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized", headers={"WWW-Authenticate": "Basic realm=\"Admin Area\""})
+
+    if not auth.lower().startswith("basic "):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized", headers={"WWW-Authenticate": "Basic realm=\"Admin Area\""})
+
+    try:
+        token = auth.split(" ", 1)[1]
+        decoded = base64.b64decode(token).decode("utf-8")
+        username, password = decoded.split(":", 1)
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized", headers={"WWW-Authenticate": "Basic realm=\"Admin Area\""})
+
+    admin_user = os.getenv("ADMIN_USERNAME")
+    admin_pass = os.getenv("ADMIN_PASSWORD")
+    if not (admin_user and admin_pass and username == admin_user and password == admin_pass):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized", headers={"WWW-Authenticate": "Basic realm=\"Admin Area\""})
+
+
 @router.get("/debug", response_class=HTMLResponse)
-async def debug_dashboard(request: Request, state: Optional[str] = None, service: Optional[str] = None, q: Optional[str] = None, date_from: Optional[str] = None, date_to: Optional[str] = None, event_id: Optional[str] = None, theme: Optional[str] = None):
+async def debug_dashboard(request: Request, state: Optional[str] = None, service: Optional[str] = None, q: Optional[str] = None, date_from: Optional[str] = None, date_to: Optional[str] = None, event_id: Optional[str] = None, theme: Optional[str] = None, _auth: None = Depends(_require_admin)):
     """Render the advanced debug dashboard with metrics, timeline and filters."""
     events = await trace_service.get_all()
 
@@ -147,13 +174,13 @@ async def debug_dashboard(request: Request, state: Optional[str] = None, service
 
 
 @router.get("/debug/export")
-async def debug_export():
+async def debug_export(_auth: None = Depends(_require_admin)):
     events = await trace_service.get_all()
     data = [_serialize(e) for e in events]
     return JSONResponse(content=data)
 
 
 @router.post("/debug/clear")
-async def debug_clear():
+async def debug_clear(_auth: None = Depends(_require_admin)):
     await trace_service.clear()
     return RedirectResponse(url="/debug", status_code=303)
