@@ -142,6 +142,10 @@ site/
 .ipynb_checkpoints/
 *.ipynb
 
+# ================================
+out_debug_dashboard.html
+tools/
+
 # Archivos de editor
 *.swp
 *.swo

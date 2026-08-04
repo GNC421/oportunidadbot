@@ -62,6 +62,12 @@ async def lifespan(app: FastAPI):
         await bot_app.initialize()
         await bot_app.start()
         logger.debug("Telegram application initialized in polling mode")
+        # Ensure any webhook is removed so polling won't conflict with an existing webhook
+        try:
+            await bot_app.bot.delete_webhook()
+            logger.debug("Deleted existing Telegram webhook to enable polling")
+        except Exception:
+            logger.debug("No webhook to delete or failed to delete webhook (continuing)")
         # Iniciar polling en una tarea asíncrona para no bloquear el servidor
         asyncio.create_task(bot_app.updater.start_polling())
         logger.info("📡 Polling iniciado en segundo plano")
@@ -100,6 +106,14 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+# Debug dashboard routes (optional, powered by app/debug)
+try:
+    from app.debug.routes import router as debug_router  # type: ignore
+    app.include_router(debug_router)
+except Exception:
+    # If tracing package is not available or fails to initialize, skip silently
+    logger.debug("Debug router not available")
 
 # --- Endpoints ---
 

@@ -9,6 +9,25 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from app.services.ai_classifier import classifier
 from app.sources import SourceFactory
 from app.logging_flow import flow_log
+from app.debug.trace_service import get_trace_service
+from app.debug.trace_models import EventType
+
+
+def _maybe_run_async(coro):
+    """Run an async coro in a sync context safely.
+
+    If an event loop is already running, schedule the task and return an
+    empty id (best-effort). Otherwise run with `asyncio.run` and return
+    the result.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+        # running loop found — schedule task and return empty placeholder
+        loop.create_task(coro)
+        return ""
+    except RuntimeError:
+        # no running loop
+        return asyncio.run(coro)
 
 def _parse_feed_source(url: str) -> Optional[Any]:
     """Obtiene el objeto parseado por feedparser para una URL dada."""
@@ -23,6 +42,13 @@ def _parse_feed_source(url: str) -> Optional[Any]:
 def validate_feed_source(url: str) -> Dict[str, Any]:
     """Valida si una URL apunta a una fuente usable y devuelve un resultado estructurado."""
     logger.debug("validate_feed_source called", url=url)
+    trace = get_trace_service()
+    event_id = ""
+    try:
+        event_id = _maybe_run_async(trace.start(type=EventType.RSS, name="Validate feed", input_payload={"url": url}))
+    except Exception:
+        # best-effort: tracing should not break validation
+        event_id = ""
     if not url or not str(url).strip():
         logger.warning("Se recibió una URL de feed vacía")
         return {"valid": False, "error": "La URL del feed está vacía", "title": "", "entry_count": 0}
@@ -40,6 +66,11 @@ def validate_feed_source(url: str) -> Dict[str, Any]:
         return source.validate()
     except Exception as exc:
         logger.exception(f"Error inesperado validando fuente {normalized_url}: {exc}")
+        try:
+            # record error in trace
+            _maybe_run_async(trace.error(event_id, error=str(exc)))
+        except Exception:
+            pass
         return {"valid": False, "error": "Error inesperado al validar el feed", "title": "", "entry_count": 0}
 
 
@@ -47,13 +78,32 @@ def validate_feed_source(url: str) -> Dict[str, Any]:
 def parse_feed(url: str) -> Optional[List[Dict]]:
     """Parsea un feed RSS y devuelve las entradas."""
     logger.debug("parse_feed called", url=url)
+    trace = get_trace_service()
+    event_id = ""
     try:
-        source = SourceFactory.from_url(url, parse_feed_fn=_parse_feed_source)
-        items = source.parse_items(limit=10)
-        if items is None:
-            return None
+        # start trace (use sync helper because parse_feed is sync)
+        try:
+            event_id = _maybe_run_async(trace.start(type=EventType.RSS, name="Parse feed", input_payload={"url": url}))
+        except Exception:
+            event_id = ""
+        try:
+            source = SourceFactory.from_url(url, parse_feed_fn=_parse_feed_source)
+            items = source.parse_items(limit=10)
+            if items is None:
+                # record as success with zero entries
+                _maybe_run_async(trace.success(event_id, output_payload={"entries": 0}))
+                return None
 
-        return [item.to_dict() for item in items]
+            res = [item.to_dict() for item in items]
+            _maybe_run_async(trace.success(event_id, output_payload={"entries": len(res)}))
+            return res
+        except Exception as exc_inner:
+            # record inner error
+            try:
+                _maybe_run_async(trace.error(event_id, error=str(exc_inner)))
+            except Exception:
+                pass
+            raise
     except Exception as exc:
         logger.error(f"Error al parsear feed {url}: {exc}")
         return None
@@ -87,6 +137,12 @@ def check_user_feeds(feed: Dict) -> List[Dict]:
     logger.debug("check_user_feeds called", feed_id=feed.get("id"), user_id=feed.get("user_id"))
 
     try:
+        trace = get_trace_service()
+        # start a trace for the feed check (sync context)
+        try:
+            event_id = _maybe_run_async(trace.start(type=EventType.RSS, name="Check user feed", input_payload={"feed_id": feed.get("id"), "url": url}))
+        except Exception:
+            event_id = ""
         url = feed.get("url")
         if not url:
             logger.warning("Feed sin URL, se omite")
@@ -94,6 +150,10 @@ def check_user_feeds(feed: Dict) -> List[Dict]:
 
         entries = parse_feed(url)
         if not entries:
+            try:
+                _maybe_run_async(trace.success(event_id, output_payload={"entries": 0}))
+            except Exception:
+                pass
             logger.info("No entries parsed for feed", url=url)
             return []
 
@@ -142,10 +202,18 @@ def check_user_feeds(feed: Dict) -> List[Dict]:
                 )
 
         logger.info(f"✅ Revisión completada. {len(results)} entradas relevantes encontradas.")
+        try:
+            _maybe_run_async(trace.success(event_id, output_payload={"matches": len(results)}))
+        except Exception:
+            pass
         return results
 
     except Exception as e:
         logger.error(f"❌ Error en check_user_feeds: {e}")
+        try:
+            _maybe_run_async(trace.error(event_id, error=str(e)))
+        except Exception:
+            pass
         return []
 
 

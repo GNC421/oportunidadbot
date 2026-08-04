@@ -9,6 +9,8 @@ from app.services.prompts import REAL_ESTATE_CLASSIFIER_PROMPT
 from loguru import logger
 
 from app.config import settings
+from app.debug.trace_service import get_trace_service
+from app.debug.trace_models import EventType
 
 # Require OpenAI SDK for the classifier
 try:
@@ -50,6 +52,8 @@ class AIClassifier:
     async def is_business_opportunity(self, title: str, summary: str) -> bool:
         """Devuelve True si el texto parece una oportunidad de negocio relevante."""
         start_time = time.perf_counter()
+        trace = get_trace_service()
+        event_id = await trace.start(type=EventType.AI, name="AI Classification", input_payload={"title": title, "summary": summary, "model": self._model})
         self._metrics["calls"] += 1
         try:
             if not self._ai_enabled:
@@ -75,11 +79,15 @@ class AIClassifier:
             result = self._parse_response(response)
             self._set_cached_result(cache_key, result)
             self._log_metrics(start_time, result)
+            # record outcome into trace
+            await trace.success(event_id, output_payload={"full_response": response, "parsed": result}, metadata={"model": self._model, "elapsed_s": round((time.perf_counter() - start_time), 3)})
             return result
         except Exception as exc:
             self._metrics["errors"] += 1
             logger.exception(f"Error clasificando oportunidad con IA: {exc}")
             self._log_metrics(start_time, False)
+            # record error into trace
+            await trace.error(event_id, error=str(exc))
             return False
 
     def _log_metrics(self, start_time: float, result: bool) -> None:
