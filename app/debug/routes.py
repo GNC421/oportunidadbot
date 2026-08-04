@@ -11,6 +11,7 @@ import base64
 from typing import Optional
 import json
 from datetime import datetime
+import traceback
 
 from .trace_service import get_trace_service
 from .trace_models import EventType, EventState
@@ -152,6 +153,18 @@ async def debug_dashboard(request: Request, state: Optional[str] = None, service
     # Prepare serializable events for list/table
     events_serial = [_serialize(e) for e in filtered]
 
+    # Sanitize fields to avoid None values that can break the Jinja template
+    for ev in events_serial:
+        ev['error'] = ev.get('error') or ''
+        ev['traceback'] = ev.get('traceback') or ''
+        if ev.get('metadata') is None:
+            ev['metadata'] = {}
+        # ensure payloads are at least empty-string or proper serializable structures
+        if ev.get('input_payload') is None:
+            ev['input_payload'] = ''
+        if ev.get('output_payload') is None:
+            ev['output_payload'] = ''
+
     # detail
     detail = None
     if event_id:
@@ -170,7 +183,28 @@ async def debug_dashboard(request: Request, state: Optional[str] = None, service
     types = [t.value for t in EventType]
     states = [s.value for s in EventState]
 
-    return templates.TemplateResponse("debug_dashboard.html", {"request": request, "events": events_serial, "types": types, "states": states, "selected_service": service, "selected_state": state, "q": q or "", "date_from": date_from or "", "date_to": date_to or "", "detail": detail, "metrics": {"total": total_events, "errors": total_errors, "ai_calls": ai_calls, "feeds_processed": feeds_processed, "alerts_sent": alerts_sent, "avg_ai": avg_ai, "avg_rss": avg_rss}, "timeline": timeline, "theme": theme})
+    try:
+        return templates.TemplateResponse("debug_dashboard.html", {"request": request, "events": events_serial, "types": types, "states": states, "selected_service": service, "selected_state": state, "q": q or "", "date_from": date_from or "", "date_to": date_to or "", "detail": detail, "metrics": {"total": total_events, "errors": total_errors, "ai_calls": ai_calls, "feeds_processed": feeds_processed, "alerts_sent": alerts_sent, "avg_ai": avg_ai, "avg_rss": avg_rss}, "timeline": timeline, "theme": theme})
+    except Exception as exc:
+        # Fallback: return a safe HTML response with basic info and serialized events
+        tb = traceback.format_exc()
+        safe_events = json.dumps(events_serial, default=str, indent=2)
+        content = (
+            "<!doctype html>"
+            "<html>"
+            "<head><meta charset='utf-8'><title>Debug Dashboard (fallback)</title>"
+            "<style>body{font-family:Arial,Helvetica,sans-serif;background:#071017;color:#e6eef6;padding:20px}pre{background:#021018;padding:12px;border-radius:6px;overflow:auto}</style>"
+            "</head>"
+            "<body>"
+            "<h1>Debug Dashboard (fallback)</h1>"
+            "<p>La plantilla falló al renderizar. Se muestra un fallback con datos JSON para diagnóstico.</p>"
+            "<h2>Error</h2>"
+            f"<pre>{tb}</pre>"
+            "<h2>Eventos (parciales)</h2>"
+            f"<pre>{safe_events}</pre>"
+            "</body></html>"
+        )
+        return HTMLResponse(content=content, status_code=200)
 
 
 @router.get("/debug/export")
