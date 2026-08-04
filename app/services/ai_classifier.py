@@ -205,6 +205,7 @@ class AIClassifier:
 
         try:
             import unicodedata
+            import re
 
             content = response.strip().lower()
             # remove accents (e.g., 'sí' -> 'si')
@@ -229,7 +230,8 @@ class AIClassifier:
 
             # fallback: look for affirmative words anywhere
             for a in affirmatives:
-                if a in content:
+                # match whole words only to avoid substring false-positives
+                if re.search(r"\b" + re.escape(a) + r"\b", content):
                     return True
             return False
         except Exception as exc:
