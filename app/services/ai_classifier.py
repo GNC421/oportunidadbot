@@ -204,8 +204,34 @@ class AIClassifier:
             return False
 
         try:
+            import unicodedata
+
             content = response.strip().lower()
-            return content == "true"
+            # remove accents (e.g., 'sí' -> 'si')
+            content = "".join(ch for ch in unicodedata.normalize("NFD", content) if unicodedata.category(ch) != "Mn")
+
+            # canonical affirmative / negative tokens
+            affirmatives = {"true", "yes", "y", "si", "s", "1", "verdadero", "v", "sí"}
+            negatives = {"false", "no", "n", "0", "f", "falso"}
+
+            # exact match
+            if content in affirmatives:
+                return True
+            if content in negatives:
+                return False
+
+            # check first token (model may return sentences like "SI es relevante" or "No, irrelevante")
+            first = content.split()[0] if content else ""
+            if first in affirmatives:
+                return True
+            if first in negatives:
+                return False
+
+            # fallback: look for affirmative words anywhere
+            for a in affirmatives:
+                if a in content:
+                    return True
+            return False
         except Exception as exc:
             logger.exception(f"Error parseando la respuesta de IA: {exc}")
             return False
