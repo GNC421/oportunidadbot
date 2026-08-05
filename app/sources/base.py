@@ -14,7 +14,14 @@ class BaseSource(ABC):
 
     DEFAULT_HTTP_TIMEOUT_SECONDS = 15.0
     DEFAULT_HTTP_MAX_RETRIES = 2
-    DEFAULT_HTTP_USER_AGENT = "Mozilla/5.0 (compatible; OportunidadBot/1.0)"
+    DEFAULT_HTTP_USER_AGENT = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/138.0.0.0 Safari/537.36"
+    )
+
+    DEFAULT_ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    DEFAULT_ACCEPT_LANGUAGE = "es-ES,es;q=0.9,en;q=0.8"
 
     def __init__(self, url: str) -> None:
         self.url = url
@@ -49,7 +56,7 @@ class BaseSource(ABC):
             try:
                 response = httpx.get(
                     target_url,
-                    headers={"User-Agent": self.DEFAULT_HTTP_USER_AGENT},
+                    headers=self.get_request_headers(target_url),
                     timeout=self.DEFAULT_HTTP_TIMEOUT_SECONDS,
                     follow_redirects=True,
                 )
@@ -81,6 +88,30 @@ class BaseSource(ABC):
                     error=str(exc),
                 )
                 return None
+
+    def get_request_headers(self, url: Optional[str] = None) -> dict[str, str]:
+        """Return default headers used for HTTP requests. Subclasses may override.
+
+        `url` is provided for convenience in case a Source wants to set a Referer
+        or per-host header values.
+        """
+        headers = {
+            "User-Agent": self.DEFAULT_HTTP_USER_AGENT,
+            "Accept": self.DEFAULT_ACCEPT,
+            "Accept-Language": self.DEFAULT_ACCEPT_LANGUAGE,
+        }
+        # optionally include Referer as the base site
+        try:
+            from urllib.parse import urlparse, urlunparse
+
+            parsed = urlparse((url or self.url).strip())
+            if parsed.scheme and parsed.netloc:
+                referer = urlunparse((parsed.scheme, parsed.netloc, "", "", "", ""))
+                headers["Referer"] = referer
+        except Exception:
+            pass
+
+        return headers
 
     @abstractmethod
     def validate(self) -> dict[str, Any]:
