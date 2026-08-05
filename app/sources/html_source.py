@@ -13,6 +13,19 @@ from app.debug.trace_service import get_trace_service
 from app.debug.trace_models import EventType
 
 
+def _maybe_run_async(coro):
+    try:
+        import asyncio
+
+        loop = asyncio.get_running_loop()
+        loop.create_task(coro)
+        return ""
+    except RuntimeError:
+        import asyncio
+
+        return asyncio.run(coro)
+
+
 SelectorType = Union[str, Tuple[str, ...]]
 
 
@@ -158,25 +171,12 @@ class HTMLSource(BaseSource):
 
     def validate(self) -> dict[str, Any]:
         trace = get_trace_service()
-        event_id = trace.start(type=EventType.GENERAL, name=f"{self.source_name} validate", input_payload={"url": self.url})
-        # trace.start returns a coroutine; run safely
-        try:
-            # start trace
-            try:
-                # run async start
-                from asyncio import get_running_loop
-
-                loop = get_running_loop()
-                loop.create_task(event_id)
-            except Exception:
-                pass
-        except Exception:
-            pass
+        event_id = _maybe_run_async(trace.start(type=EventType.HTML, name=f"{self.source_name} validate", input_payload={"url": self.url}))
 
         html = self._fetch_html()
         if html is None:
             try:
-                get_trace_service().error("", error="no content")
+                _maybe_run_async(trace.error(event_id, error="no content"))
             except Exception:
                 pass
             return {"valid": False, "error": "No se pudo obtener el contenido de la fuente", "title": "", "entry_count": 0}
@@ -188,7 +188,7 @@ class HTMLSource(BaseSource):
 
         if not articles:
             try:
-                get_trace_service().error("", error="no entries")
+                _maybe_run_async(trace.error(event_id, error="no entries"))
             except Exception:
                 pass
             return {"valid": False, "error": "La fuente no contiene anuncios válidos", "title": "", "entry_count": 0}
@@ -197,20 +197,14 @@ class HTMLSource(BaseSource):
 
     def parse_items(self, limit: int = 10) -> Optional[list[Item]]:
         trace = get_trace_service()
+        event_id = _maybe_run_async(trace.start(type=EventType.HTML, name=f"{self.source_name} parse", input_payload={"url": self.url, "limit": limit}))
         try:
-            # start trace
-            try:
-                import asyncio
-
-                asyncio.create_task(trace.start(type=EventType.GENERAL, name=f"{self.source_name} parse", input_payload={"url": self.url, "limit": limit}))
-            except Exception:
-                pass
 
             html = self._fetch_html()
             if html is None:
                 self._source_logger().warning("Skipping parse because HTML could not be fetched")
                 try:
-                    asyncio.create_task(trace.error("", error="no content"))
+                    _maybe_run_async(trace.error(event_id, error="no content"))
                 except Exception:
                     pass
                 return None
@@ -219,6 +213,10 @@ class HTMLSource(BaseSource):
             articles, used_fallback = self._find_articles(soup)
             if used_fallback and articles:
                 self._record_fallback(primary=str(self.selectors.item_selector), fallback="article", matches=len(articles))
+                try:
+                    _maybe_run_async(trace.start(type=EventType.HTML, name=f"{self.source_name} structure_fallback", input_payload={"primary": str(self.selectors.item_selector), "fallback": "article", "matches": len(articles)}))
+                except Exception:
+                    pass
 
             items: list[Item] = []
             self._inc_metric("parse_runs")
@@ -256,18 +254,14 @@ class HTMLSource(BaseSource):
                 metrics=self.get_metrics(),
             )
             try:
-                import asyncio
-
-                asyncio.create_task(trace.success("", output_payload={"parsed_entries": len(items)}))
+                _maybe_run_async(trace.success(event_id, output_payload={"parsed_entries": len(items)}))
             except Exception:
                 pass
             return items
         except Exception as exc:
             self._source_logger().error("Error parsing HTML source", error=str(exc))
             try:
-                import asyncio
-
-                asyncio.create_task(trace.error("", error=str(exc)))
+                _maybe_run_async(trace.error(event_id, error=str(exc)))
             except Exception:
                 pass
             return None

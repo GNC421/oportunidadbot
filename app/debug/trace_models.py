@@ -15,6 +15,7 @@ class EventType(str, Enum):
 
     AI = "AI"
     RSS = "RSS"
+    HTML = "HTML"
     DATABASE = "DATABASE"
     TELEGRAM = "TELEGRAM"
     SCHEDULER = "SCHEDULER"
