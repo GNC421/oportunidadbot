@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Optional, Tuple, Union
 
 from bs4 import BeautifulSoup, Tag
+from urllib.parse import urljoin
 from loguru import logger
 
 from .base import BaseSource
@@ -66,18 +67,26 @@ class HTMLSource(BaseSource):
         return (selectors,)
 
     def _find_articles(self, soup: BeautifulSoup) -> Tuple[list[Tag], bool]:
-        primary = self._to_tuple(self.selectors.item_selector)
-        articles = []
+        primary_tuple = self._to_tuple(self.selectors.item_selector)
+        articles: list[Tag] = []
         used_fallback = False
-        for sel in primary:
+        matched_selector = None
+
+        for sel in primary_tuple:
             articles = soup.select(sel)
             if articles:
+                matched_selector = sel
                 break
 
         # if no articles found, attempt a very generic fallback (any article tag)
         if not articles:
-            used_fallback = True
+            matched_selector = "article"
             articles = soup.select("article") or []
+
+        # consider fallback used when the matched selector is not the first primary selector
+        first_primary = primary_tuple[0] if primary_tuple else None
+        if matched_selector and first_primary and matched_selector != first_primary:
+            used_fallback = True
 
         return articles, used_fallback
 
@@ -103,12 +112,12 @@ class HTMLSource(BaseSource):
         for sel in self._to_tuple(selectors):
             node = root.select_one(sel)
             if node and node.get("href"):
-                return str(node.get("href"))
+                return urljoin(self.url, str(node.get("href")))
 
         # try common anchor attributes inside the article
         node = root.select_one("a[href]")
         if node and node.get("href"):
-            return str(node.get("href"))
+            return urljoin(self.url, str(node.get("href")))
 
         return ""
 
@@ -119,7 +128,7 @@ class HTMLSource(BaseSource):
                 for attr in ("src", "data-src", "data-original"):
                     val = node.get(attr)
                     if val:
-                        return str(val)
+                        return urljoin(self.url, str(val))
 
         # generic img
         node = root.select_one("img")
@@ -127,7 +136,7 @@ class HTMLSource(BaseSource):
             for attr in ("src", "data-src", "data-original"):
                 val = node.get(attr)
                 if val:
-                    return str(val)
+                    return urljoin(self.url, str(val))
         return ""
 
     def _extract_external_id(self, root: Tag) -> str:
