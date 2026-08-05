@@ -4,6 +4,7 @@ from .rss_source import RSSSource, RSSFeedSource
 from .reddit_source import RedditSource
 from .tablon_source import TablonSource
 from .factory import SourceFactory
+from .milanuncios_source import MilanunciosSource
 
 __all__ = [
 	"Item",
@@ -12,5 +13,6 @@ __all__ = [
 	"RSSFeedSource",
 	"RedditSource",
 	"TablonSource",
+    "MilanunciosSource",
 	"SourceFactory",
 ]
