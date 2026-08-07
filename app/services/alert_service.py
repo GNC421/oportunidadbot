@@ -6,6 +6,21 @@ import os
 from app.database import get_user
 from app.debug.trace_service import get_trace_service
 from app.debug.trace_models import EventType
+try:
+    from telegram.utils.helpers import escape_markdown  # type: ignore
+except Exception:
+    # Fallback simple escaper to avoid dependency in tests
+    def escape_markdown(text: str, version: int = 1) -> str:
+        if text is None:
+            return ""
+        esc_chars = '\\_*[]()~`>#+-=|{}.!'
+        out = []
+        for ch in str(text):
+            if ch in esc_chars:
+                out.append(f"\\{ch}")
+            else:
+                out.append(ch)
+        return ''.join(out)
 
 BOT_USERNAME = os.getenv("BOT_USERNAME", "OportunidadBot")
 
@@ -73,24 +88,71 @@ async def send_alert(user_id: int, post_data: dict, feed_id: int):
                       for pattern in ['alguien sabe', 'recomendáis', '¿', '?'])
     
     emoji = "🔍" if is_question else "📢"
-    
-    alert_text = f"""
-{emoji} *¡Nueva oportunidad detectada!*
 
-📌 *{title[:100]}*
+    # Construir mensaje usando helper reutilizable
+    def format_opportunity_message(item: dict, limit: int = 4000) -> tuple[str, InlineKeyboardMarkup]:
+        title = item.get('title') or 'Sin título'
+        category = item.get('category')
+        price = item.get('price')
+        location = item.get('location')
+        description = item.get('summary') or ''
+        post_url = item.get('link') or ''
 
-{content}...
+        esc = lambda s: escape_markdown(str(s), version=1) if s is not None else ''
 
-👤 Publicado por: {post_data.get('author', 'Anónimo')}
-"""
-    
-    # Botones de acción
-    keyboard = [
-        [InlineKeyboardButton("📝 Redactar respuesta con IA", callback_data=f"generate_alert_{feed_id}")],
-        [InlineKeyboardButton("🔗 Ver publicación original", url=post_url)],
-        [InlineKeyboardButton("⏰ Recordar más tarde", callback_data="remind_later")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+        parts: list[str] = []
+        parts.append("🚨 NUEVA OPORTUNIDAD")
+        parts.append("")
+        parts.append(f"🏠 {esc(title)}")
+
+        if category:
+            parts.append(f"🏷️ {esc(category)}")
+
+        if price:
+            parts.append(f"💰 {esc(price)}")
+
+        if description:
+            parts.append("")
+            parts.append("📄 Descripción:")
+            parts.append(esc(description))
+
+        if location:
+            parts.append("")
+            parts.append(f"📍 {esc(location)}")
+
+        text = "\n".join(parts)
+
+        if len(text) > limit and description:
+            try:
+                desc_index = parts.index(esc(description))
+            except ValueError:
+                desc_index = None
+
+            if desc_index is not None:
+                label_index = desc_index - 1 if desc_index - 1 >= 0 else desc_index
+                prefix = parts[:label_index]
+                footer = parts[desc_index+1:]
+                # Reserve length for prefix + label + footer + ellipsis
+                reserved = len("\n".join(prefix + ["", "📄 Descripción:"] + footer)) + 3
+                allowed_desc = max(0, limit - reserved)
+                if allowed_desc <= 0:
+                    text = "\n".join(["🚨 NUEVA OPORTUNIDAD", "", f"🏠 {esc(title)}"])
+                else:
+                    short_desc = esc(description)[:allowed_desc]
+                    if " " in short_desc:
+                        short_desc = short_desc.rsplit(' ', 1)[0]
+                    text = "\n".join(prefix + ["", "📄 Descripción:", short_desc + "..."] + footer)
+
+        keyboard = []
+        if post_url:
+            keyboard = [[InlineKeyboardButton("🔗 Ver anuncio", url=post_url)]]
+
+        reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+        return text, reply_markup
+
+    alert_text, reply_markup = format_opportunity_message(post_data)
+
+    # reply_markup ya proviene de format_opportunity_message (solo botón Ver anuncio)
     
     try:
         await application.bot.send_message(
