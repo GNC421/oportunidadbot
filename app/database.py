@@ -4,6 +4,18 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 from .config import settings
+from app.debug.trace_service import get_trace_service
+from app.debug.trace_models import EventType
+import asyncio
+
+
+def _maybe_run_async(coro):
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(coro)
+        return ""
+    except RuntimeError:
+        return asyncio.run(coro)
 
 if not settings.SUPABASE_URL or not settings.SUPABASE_KEY:
     logger.error("❌ Supabase URL o KEY no configuradas")
@@ -26,14 +38,23 @@ def init_db():
 
 def add_user(user_id: int, username: str) -> bool:
     """Añade un nuevo usuario o actualiza si existe"""
+    trace = get_trace_service()
+    event_id = _maybe_run_async(trace.start(type=EventType.DATABASE, name="Add/Update user", input_payload={"user_id": user_id, "username": username}))
     try:
         # Verificar si existe
         existing = supabase.table('users').select('*').eq('id', user_id).execute()
         
         if existing.data:
+            current = existing.data[0]
             # Actualizar
             supabase.table('users').update({
                 'username': username,
+                'plan': current.get('plan', 'starter'),
+                'subscription_status': current.get('subscription_status', 'active'),
+                'stripe_customer_id': current.get('stripe_customer_id'),
+                'stripe_subscription_id': current.get('stripe_subscription_id'),
+                'current_period_end': current.get('current_period_end'),
+                'cancel_at_period_end': bool(current.get('cancel_at_period_end', False)),
                 'updated_at': datetime.now().isoformat()
             }).eq('id', user_id).execute()
             logger.info(f"📝 Usuario actualizado: {username} (ID: {user_id})")
@@ -42,12 +63,19 @@ def add_user(user_id: int, username: str) -> bool:
             supabase.table('users').insert({
                 'id': user_id,
                 'username': username,
-                'is_active': True
+                'is_active': True,
+                'plan': 'starter',
+                'subscription_status': 'active',
+                'stripe_customer_id': None,
+                'stripe_subscription_id': None,
+                'current_period_end': None,
+                'cancel_at_period_end': False,
             }).execute()
             logger.info(f"👤 Nuevo usuario: {username} (ID: {user_id})")
         return True
     except Exception as e:
         logger.error(f"Error al añadir usuario: {e}")
+        _maybe_run_async(trace.error(event_id, error=str(e)))
         return False
 
 def get_user(user_id: int) -> Optional[Dict]:
@@ -59,11 +87,94 @@ def get_user(user_id: int) -> Optional[Dict]:
         logger.error(f"Error al obtener usuario: {e}")
         return None
 
+
+def get_user_by_stripe_customer_id(stripe_customer_id: str) -> Optional[Dict]:
+    """Obtiene un usuario por su stripe_customer_id."""
+    try:
+        result = supabase.table('users').select('*').eq('stripe_customer_id', stripe_customer_id).execute()
+        return result.data[0] if result.data else None
+    except Exception as e:
+        logger.error(f"Error al obtener usuario por stripe_customer_id {stripe_customer_id}: {e}")
+        return None
+
+
+def update_user_subscription(
+    user_id: int,
+    plan: str,
+    subscription_status: str,
+    stripe_customer_id: Optional[str] = None,
+    stripe_subscription_id: Optional[str] = None,
+    current_period_end: Optional[str] = None,
+    cancel_at_period_end: bool = False,
+) -> bool:
+    """Actualiza los campos de suscripción de un usuario."""
+    trace = get_trace_service()
+    event_id = _maybe_run_async(trace.start(type=EventType.DATABASE, name="Update subscription", input_payload={"user_id": user_id, "plan": plan}))
+    try:
+        result = supabase.table('users').update({
+            'plan': plan,
+            'subscription_status': subscription_status,
+            'stripe_customer_id': stripe_customer_id,
+            'stripe_subscription_id': stripe_subscription_id,
+            'current_period_end': current_period_end,
+            'cancel_at_period_end': cancel_at_period_end,
+            'updated_at': datetime.now().isoformat(),
+        }).eq('id', user_id).execute()
+        return bool(getattr(result, 'data', None) is not None)
+    except Exception as e:
+        logger.error(f"Error al actualizar suscripción del usuario {user_id}: {e}")
+        _maybe_run_async(trace.error(event_id, error=str(e)))
+        return False
+
+
+def register_stripe_webhook_event(event_id: str, event_type: str, payload: Dict[str, Any]) -> bool:
+    """Registra un evento de Stripe para idempotencia. Devuelve False si ya existe."""
+    try:
+        existing = supabase.table('stripe_webhook_events').select('id').eq('event_id', event_id).execute()
+        if existing.data:
+            return False
+
+        supabase.table('stripe_webhook_events').insert({
+            'event_id': event_id,
+            'event_type': event_type,
+            'status': 'received',
+            'payload': payload,
+            'created_at': datetime.now().isoformat(),
+            'processed_at': None,
+            'error_message': None,
+        }).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Error al registrar evento de Stripe {event_id}: {e}")
+        return False
+
+
+def mark_stripe_webhook_event_status(event_id: str, status: str, error_message: Optional[str] = None) -> bool:
+    """Actualiza el estado de procesamiento de un evento de Stripe."""
+    try:
+        result = supabase.table('stripe_webhook_events').update({
+            'status': status,
+            'processed_at': datetime.now().isoformat(),
+            'error_message': error_message,
+        }).eq('event_id', event_id).execute()
+        return bool(getattr(result, 'data', None) is not None)
+    except Exception as e:
+        logger.error(f"Error al actualizar estado del evento de Stripe {event_id}: {e}")
+        return False
+
 # ============ CRUD Feeds ============
 
 def add_feed(user_id: int, url: str) -> Optional[int]:
     """Añade un nuevo feed para un usuario."""
+    trace = get_trace_service()
+    event_id = _maybe_run_async(trace.start(type=EventType.DATABASE, name="Add feed", input_payload={"user_id": user_id, "url": url}))
     try:
+        from app.services.subscription_service import get_subscription_service
+
+        if not get_subscription_service().can_add_source(user_id):
+            logger.warning(f"Usuario {user_id} alcanzó el límite de fuentes para su suscripción")
+            return None
+
         result = supabase.table('feeds').insert({
             'user_id': user_id,
             'url': url,
@@ -75,6 +186,7 @@ def add_feed(user_id: int, url: str) -> Optional[int]:
         return feed_id
     except Exception as e:
         logger.error(f"Error al añadir feed: {e}")
+        _maybe_run_async(trace.error(event_id, error=str(e)))
         return None
 
 
@@ -171,6 +283,8 @@ def update_feed_last_check(feed_id: int):
 
 def save_alert(user_id: int, feed_id: int, post_data: Dict) -> Optional[int]:
     """Guarda una alerta en la base de datos"""
+    trace = get_trace_service()
+    event_id = _maybe_run_async(trace.start(type=EventType.DATABASE, name="Save alert", input_payload={"user_id": user_id, "feed_id": feed_id, "post_url": post_data.get("link")}))
     try:
         result = supabase.table('alerts').insert({
             'user_id': user_id,
@@ -184,6 +298,7 @@ def save_alert(user_id: int, feed_id: int, post_data: Dict) -> Optional[int]:
         return result.data[0]['id'] if result.data else None
     except Exception as e:
         logger.error(f"Error al guardar alerta: {e}")
+        _maybe_run_async(trace.error(event_id, error=str(e)))
         return None
 
 def get_alert_by_url(post_url: str) -> Optional[Dict]:
@@ -197,9 +312,13 @@ def get_alert_by_url(post_url: str) -> Optional[Dict]:
 
 def mark_alert_sent(alert_id: int):
     """Marca una alerta como enviada"""
+    trace = get_trace_service()
+    event_id = _maybe_run_async(trace.start(type=EventType.DATABASE, name="Mark alert sent", input_payload={"alert_id": alert_id}))
     try:
         supabase.table('alerts').update({
             'sent_at': datetime.now().isoformat()
         }).eq('id', alert_id).execute()
+        _maybe_run_async(trace.success(event_id, output_payload={"alert_id": alert_id}))
     except Exception as e:
         logger.error(f"Error al marcar alerta enviada: {e}")
+        _maybe_run_async(trace.error(event_id, error=str(e)))

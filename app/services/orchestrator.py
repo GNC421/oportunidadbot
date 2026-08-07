@@ -9,16 +9,21 @@ from app.database import (
     update_feed_last_check,
 )
 from app.services.alert_service import send_alert
-from app.services.feed_parser import check_user_feeds
+from app.services.feed_parser import check_user_source_entries
+from app.logging_flow import flow_log
+from app.debug.trace_service import get_trace_service
+from app.debug.trace_models import EventType
+import time
 
 logger = logging.getLogger(__name__)
 
 
 class Orchestrator:
-    """Coordina el flujo RSS -> parser -> alerta."""
+    """Coordina el flujo source -> parser -> alerta."""
 
     def _build_alert_payload(self, alert: Dict) -> Dict:
         """Normaliza la salida del parser a un formato compatible con el resto del sistema."""
+        logger.debug("Building alert payload", source_keys=list(alert.keys()))
         return {
             "title": alert.get("title", ""),
             "summary": alert.get("summary", ""),
@@ -29,6 +34,7 @@ class Orchestrator:
 
     async def _handle_alert(self, user_id: int, feed_id: int, alert: Dict) -> None:
         """Procesa una oportunidad detectada en el orden pedido por el flujo."""
+        logger.debug("Handling alert", user_id=user_id, feed_id=feed_id)
         payload = self._build_alert_payload(alert)
         post_url = payload.get("link", "")
 
@@ -47,13 +53,21 @@ class Orchestrator:
             post_data=payload,
         )
         logger.info(f"Alerta guardada ({alert_id})")
+        flow_log(5, 6, "Alerta guardada")
 
         await send_alert(user_id=user_id, post_data=payload, feed_id=feed_id)
+        logger.debug("Alert sent request completed", user_id=user_id, feed_id=feed_id)
+        flow_log(6, 6, "Telegram enviado correctamente")
 
         if alert_id:
             mark_alert_sent(alert_id)
 
     async def run_feed_checks(self) -> int:
+        logger.debug("run_feed_checks started")
+        flow_log(1, 6, "Scheduler inicia revisión del feed...")
+        trace = get_trace_service()
+        start_ts = time.perf_counter()
+        event_id = await trace.start(type=EventType.SCHEDULER, name="Scheduler run", input_payload={})
         logger.info("=" * 60)
         logger.info("Iniciando comprobación de feeds")
         logger.info("=" * 60)
@@ -63,11 +77,14 @@ class Orchestrator:
             feeds = get_active_feeds()
         except Exception:
             logger.exception("No se pudieron obtener los feeds")
+            await trace.error(event_id, error="No se pudieron obtener los feeds")
             return 0
 
         if not feeds:
             logger.info("No hay feeds disponibles para revisar")
             return 0
+
+        logger.info(f"Feeds activos a revisar: {len(feeds)}")
 
         total_alerts = 0
 
@@ -82,7 +99,7 @@ class Orchestrator:
                     continue
 
                 logger.info(f"Procesando feed {url}")
-                opportunities = check_user_feeds(feed)
+                opportunities = check_user_source_entries(feed)
 
                 if not opportunities:
                     logger.info(f"No hay novedades para {url}")
@@ -99,11 +116,14 @@ class Orchestrator:
                         logger.exception("Error procesando oportunidad")
 
                 update_feed_last_check(feed_id)
+                logger.debug("last_check updated", feed_id=feed_id)
 
             except Exception:
                 logger.exception(f"Error procesando feed {feed.get('url')}")
 
         logger.info(f"Finalizada comprobación. Alertas enviadas: {total_alerts}")
+        elapsed = round(time.perf_counter() - start_ts, 3)
+        await trace.success(event_id, output_payload={"alerts": total_alerts, "feeds_checked": len(feeds), "elapsed_s": elapsed})
         return total_alerts
 
 
@@ -111,4 +131,5 @@ orchestrator = Orchestrator()
 
 
 async def run_feed_checks() -> int:
+    logger.debug("run_feed_checks wrapper called")
     return await orchestrator.run_feed_checks()

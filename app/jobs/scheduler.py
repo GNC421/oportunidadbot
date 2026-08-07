@@ -12,6 +12,7 @@ scheduler = AsyncIOScheduler()
 
 def start_scheduler():
 
+    logger.debug("start_scheduler called")
     logger.info("Configurando scheduler")
 
     scheduler.add_job(
@@ -26,11 +27,12 @@ def start_scheduler():
     scheduler.start()
 
     logger.info("Scheduler iniciado")
-    logger.info("Comprobación automática cada 15 minutos")
+    logger.info("Comprobación automática de fuentes cada 15 minutos")
 
 
 def stop_scheduler():
 
+    logger.debug("stop_scheduler called")
     logger.info("Deteniendo scheduler")
 
     scheduler.shutdown(wait=False)

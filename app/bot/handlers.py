@@ -1,44 +1,193 @@
 from typing import Any, Dict, Optional
+from datetime import datetime, timezone
+from decimal import Decimal
 from urllib.parse import urlparse
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    ConversationHandler,
+    MessageHandler,
+    filters,
+)
 from loguru import logger
 
 from app import database
-from app.config import settings
+from app.services.stripe_service import StripeIntegrationError, get_stripe_service
+from app.services.subscription_service import get_subscription_service
+from app.subscriptions.entities import Plan
+from app.subscriptions import get_subscription_catalog
 from app.services import feed_parser
+from app.services.source_display_name import SourceDisplayNameService
+from app.sources import SourceFactory
+from app.debug.trace_service import get_trace_service
+from app.debug.trace_models import EventType
 
-MAX_FEEDS_PER_USER = getattr(settings, "MAX_FEEDS_PER_USER", 10)
+MENU_ADD_SOURCE = "menu_add_source"
+MENU_MY_SOURCES = "menu_my_sources"
+MENU_HELP = "menu_help"
+MENU_SUBSCRIPTION = "menu_subscription"
+
+SUB_CONTRACT = "sub_contract"
+SUB_CHANGE = "sub_change"
+SUB_CANCEL_RENEWAL = "sub_cancel_renewal"
+SUB_OPEN_PORTAL = "sub_open_portal"
+
+WAITING_URL = 1
+
+
+def _log_command_entry(command_name: str, update: Update, args: Optional[list[str]] = None) -> None:
+    """Registra una traza uniforme al entrar en comandos y callbacks."""
+    user = update.effective_user
+    logger.debug(
+        "Entering handler",
+        handler=command_name,
+        user_id=user.id if user else None,
+        username=user.username if user else None,
+        args=args or [],
+    )
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Maneja el comando /start."""
-    user = update.effective_user
-    welcome_text = (
-        f"¡Hola {user.first_name}! 👋\n\n"
-        "Soy **OportunidadBot**, tu asistente para encontrar oportunidades.\n"
-        "Usa /help para ver qué puedo hacer."
+    _log_command_entry("start_command", update, context.args)
+    await update.message.reply_text(
+        _get_main_menu_text(),
+        reply_markup=_build_main_menu_markup(),
     )
-    keyboard = [[InlineKeyboardButton("Visitar sitio", url="https://tusitio.com")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(welcome_text, reply_markup=reply_markup, parse_mode="Markdown")
+
+
+def _get_main_menu_text() -> str:
+    """Texto principal mostrado al usuario al iniciar el bot."""
+    return "🏠 OportunidadBot\n\n¿Qué quieres hacer?"
+
+
+def _build_main_menu_markup() -> InlineKeyboardMarkup:
+    """Construye el menú principal de navegación del bot."""
+    keyboard = [
+        [InlineKeyboardButton("➕ Añadir fuente", callback_data=MENU_ADD_SOURCE)],
+        [InlineKeyboardButton("📂 Mis fuentes", callback_data=MENU_MY_SOURCES)],
+        [InlineKeyboardButton("💳 Mi suscripción", callback_data=MENU_SUBSCRIPTION)],
+        [InlineKeyboardButton("❓ Ayuda", callback_data=MENU_HELP)],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+def _get_add_source_prompt_text() -> str:
+    """Texto guía para solicitar una URL al usuario."""
+    return (
+        "Pega la URL que deseas monitorizar.\n\n"
+        "Ejemplos:\n\n"
+        "https://reddit.com/r/murcia\n\n"
+        "https://reddit.com/r/alicante\n\n"
+        "Escribe /cancel para cancelar."
+    )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Maneja el comando /help."""
-    help_text = (
+    _log_command_entry("help_command", update, context.args)
+    await update.message.reply_text(_get_help_text(), parse_mode="Markdown")
+
+
+def _get_help_text() -> str:
+    """Texto de ayuda con los comandos actualmente soportados."""
+    plans_text = _get_subscription_plans_text()
+    return (
         "📋 **Lista de comandos disponibles:**\n\n"
-        "/start - Mensaje de bienvenida\n"
+        "/start - Mostrar menú principal\n"
         "/help - Mostrar esta ayuda\n"
-        "/addgroup [URL] - Añadir un feed RSS\n"
-        "/groups - Listar tus feeds\n"
-        "/removegroup [ID] - Eliminar un feed\n"
-        "/pausegroup [ID] - Pausar un feed\n"
-        "/resumegroup [ID] - Reanudar un feed\n"
-        "/ping - Verificar latencia (para pruebas)"
+        "/subscription - Ver y gestionar tu suscripción\n"
+        "/addgroup [URL] - Añadir un feed a partir de una URL soportada\n\n"
+        "💳 **Planes**\n"
+        f"{plans_text}"
     )
-    await update.message.reply_text(help_text, parse_mode="Markdown")
+
+
+def _format_plan_price(value: Decimal) -> str:
+    """Da formato consistente a precios de planes con dos decimales."""
+    return f"{value:.2f}"
+
+
+def _get_subscription_plans_text() -> str:
+    """Construye el bloque de planes usando exclusivamente SubscriptionCatalog."""
+    catalog = get_subscription_catalog()
+    lines: list[str] = []
+
+    for plan in catalog.list_plans():
+        limit_label = "Ilimitadas" if plan.source_limit is None else str(plan.source_limit)
+        lines.append(f"- {plan.name}: {_format_plan_price(plan.price)} {plan.currency}/mes")
+        lines.append(f"  Fuentes: {limit_label}")
+        for feature in plan.features:
+            lines.append(f"  - {feature}")
+
+    return "\n".join(lines)
+
+
+def _format_subscription_status(raw_status: str) -> str:
+    """Traduce estados técnicos de suscripción a etiquetas legibles para Telegram."""
+    labels = {
+        "active": "Activa",
+        "trialing": "En prueba",
+        "past_due": "Pago pendiente",
+        "canceled": "Cancelada",
+        "incomplete": "Incompleta",
+        "incomplete_expired": "Incompleta expirada",
+        "unpaid": "Impagada",
+    }
+    normalized = (raw_status or "").strip().lower()
+    return labels.get(normalized, raw_status or "Desconocido")
+
+
+def _format_renewal_date(value: Optional[datetime]) -> str:
+    """Formatea la fecha de renovación para la vista de suscripción."""
+    if value is None:
+        return "No disponible"
+    return value.astimezone(timezone.utc).strftime("%d/%m/%Y")
+
+
+def _build_subscription_markup() -> InlineKeyboardMarkup:
+    """Construye el teclado de acciones para gestión de suscripción."""
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("🛒 Contratar plan", callback_data=SUB_CONTRACT)],
+            [InlineKeyboardButton("🔁 Cambiar plan", callback_data=SUB_CHANGE)],
+            [InlineKeyboardButton("⏹ Cancelar renovación", callback_data=SUB_CANCEL_RENEWAL)],
+            [InlineKeyboardButton("🌐 Abrir Stripe Portal", callback_data=SUB_OPEN_PORTAL)],
+        ]
+    )
+
+
+def _build_subscription_checkout_markup() -> InlineKeyboardMarkup:
+    """Muestra las opciones de plan para abrir checkout en Stripe."""
+    plan_rows = [
+        [InlineKeyboardButton(plan.name, callback_data=f"sub_checkout_{plan.identifier}")]
+        for plan in get_subscription_catalog().list_plans()
+    ]
+    plan_rows.append([InlineKeyboardButton("⬅ Volver", callback_data=MENU_SUBSCRIPTION)])
+    return InlineKeyboardMarkup(plan_rows)
+
+
+def _build_subscription_summary_text(user_id: int) -> str:
+    """Construye el resumen de suscripción a partir de catálogo y Supabase."""
+    subscription_service = get_subscription_service()
+    subscription = subscription_service.get_current_subscription(user_id)
+    used_sources = database.user_feed_count(user_id)
+    source_limit = subscription.plan_definition.source_limit
+    limit_text = "Ilimitadas" if source_limit is None else str(source_limit)
+
+    return (
+        "💳 **Mi suscripción**\n\n"
+        f"Plan actual: {subscription.plan_definition.name}\n"
+        f"Precio mensual: {_format_plan_price(subscription.plan_definition.price)} {subscription.plan_definition.currency}/mes\n"
+        f"Estado: {_format_subscription_status(subscription.status.value)}\n"
+        f"Renovación: {_format_renewal_date(subscription.current_period_end)}\n"
+        f"Fuentes utilizadas: {used_sources}\n"
+        f"Límite de fuentes: {limit_text}"
+    )
 
 
 def _get_user_id(update: Update) -> Optional[int]:
@@ -65,6 +214,111 @@ def _fetch_user_feeds(user_id: int) -> list[Dict[str, Any]]:
     return database.get_user_feeds(user_id)
 
 
+def _feed_display_name(feed_url: str) -> str:
+    """Construye un nombre legible para mostrar el feed al usuario."""
+    return SourceDisplayNameService.from_url(feed_url)
+
+
+def _parse_iso_datetime(raw_value: Optional[str]) -> Optional[datetime]:
+    """Intenta parsear fechas ISO devolviendo datetime con zona horaria."""
+    if not raw_value:
+        return None
+
+    value = raw_value.strip()
+    if not value:
+        return None
+
+    if value.endswith("Z"):
+        value = value[:-1] + "+00:00"
+
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _relative_last_check_text(feed: Dict[str, Any]) -> str:
+    """Genera el texto de última revisión para el feed."""
+    last_check = _parse_iso_datetime(str(feed.get("last_check") or ""))
+    if not last_check:
+        return "Sin revisiones todavía"
+
+    now = datetime.now(timezone.utc)
+    delta_seconds = int((now - last_check).total_seconds())
+    if delta_seconds < 60:
+        return "Hace menos de un minuto"
+
+    minutes = delta_seconds // 60
+    if minutes < 60:
+        suffix = "minuto" if minutes == 1 else "minutos"
+        return f"Hace {minutes} {suffix}"
+
+    hours = minutes // 60
+    if hours < 24:
+        suffix = "hora" if hours == 1 else "horas"
+        return f"Hace {hours} {suffix}"
+
+    days = hours // 24
+    suffix = "día" if days == 1 else "días"
+    return f"Hace {days} {suffix}"
+
+
+def _build_feed_card(feed: Dict[str, Any]) -> tuple[str, InlineKeyboardMarkup]:
+    """Construye texto y botones para renderizar un feed como tarjeta."""
+    feed_id = feed.get("id")
+    feed_url = str(feed.get("url") or "")
+    is_active = bool(feed.get("is_active", True))
+    icon = "🟢" if is_active else "⏸"
+    name = _feed_display_name(feed_url)
+    last_check_text = _relative_last_check_text(feed)
+
+    card_text = f"{icon} {name}\n\nÚltima revisión:\n{last_check_text}"
+
+    if is_active:
+        primary_button = InlineKeyboardButton("⏸ Pausar", callback_data=f"feed_pause_{feed_id}")
+    else:
+        primary_button = InlineKeyboardButton("▶ Reanudar", callback_data=f"feed_resume_{feed_id}")
+
+    keyboard = InlineKeyboardMarkup(
+        [[primary_button, InlineKeyboardButton("🗑 Eliminar", callback_data=f"feed_delete_{feed_id}")]]
+    )
+    return card_text, keyboard
+
+
+def _build_delete_confirmation(feed: Dict[str, Any]) -> tuple[str, InlineKeyboardMarkup]:
+    """Construye el mensaje de confirmación para eliminar un feed."""
+    feed_id = feed.get("id")
+    feed_name = _feed_display_name(str(feed.get("url") or ""))
+    text = (
+        "⚠ ¿Seguro que deseas eliminar esta fuente?\n\n"
+        f"{feed_name}\n\n"
+        "Esta acción no puede deshacerse."
+    )
+    markup = InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("✅ Eliminar", callback_data=f"feed_delete_confirm_{feed_id}")],
+            [InlineKeyboardButton("❌ Cancelar", callback_data=f"feed_delete_cancel_{feed_id}")],
+        ]
+    )
+    return text, markup
+
+
+def _build_remaining_feeds_text(feeds: list[Dict[str, Any]]) -> str:
+    """Construye un resumen textual de las fuentes restantes."""
+    if not feeds:
+        return "No te quedan fuentes registradas. Usa ➕ Añadir fuente para crear una nueva."
+
+    lines = ["📂 Fuentes restantes:"]
+    for feed in feeds:
+        icon = "🟢" if bool(feed.get("is_active", True)) else "⏸"
+        lines.append(f"- {icon} {_feed_display_name(str(feed.get('url') or ''))}")
+    return "\n".join(lines)
+
+
 def _delete_user_feed(user_id: int, feed_id: int) -> None:
     """Elimina un feed del usuario mediante la capa de persistencia."""
     database.supabase.table("feeds").delete().eq("id", feed_id).eq("user_id", user_id).execute()
@@ -84,27 +338,42 @@ def _find_user_feed(user_id: int, feed_id: int) -> Optional[Dict[str, Any]]:
 
 
 async def addgroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Añade un feed RSS para el usuario actual."""
+    """Añade un feed para el usuario actual a partir de una URL soportada."""
+    _log_command_entry("addgroup_command", update, context.args)
+    if not context.args:
+        await update.message.reply_text("Uso: /addgroup [URL]")
+        return
+
+    raw_url = " ".join(context.args).strip()
+    await _addgroup_from_raw_url(update, raw_url)
+
+
+async def _addgroup_from_raw_url(update: Update, raw_url: str) -> None:
+    """Ejecuta el flujo de alta de feed desde una URL en texto plano."""
     user_id = _get_user_id(update)
     if not user_id:
         await update.message.reply_text("No pude identificar tu usuario. Inténtalo de nuevo.")
         return
 
-    if not context.args:
-        await update.message.reply_text("Uso: /addgroup [URL_del_feed_RSS]")
-        return
-
-    raw_url = " ".join(context.args).strip()
     if not raw_url:
         await update.message.reply_text("La URL del feed no puede estar vacía.")
         return
 
     normalized_url = _normalize_feed_url(raw_url)
+    logger.debug("URL normalized for addgroup", raw_url=raw_url, normalized_url=normalized_url)
     parsed = urlparse(normalized_url)
     if not parsed.scheme or not parsed.netloc:
         logger.warning("URL de feed inválida recibida: {}", raw_url)
         await update.message.reply_text("La URL no tiene un formato válido. Prueba con una dirección completa como https://ejemplo.com/feed")
         return
+
+    resolved_feed_url = SourceFactory.resolve_registration_url(normalized_url)
+    if resolved_feed_url is None:
+        logger.warning("No se pudo resolver una URL de fuente para: {}", normalized_url)
+        await update.message.reply_text("La plataforma aún no está soportada para registrarla automáticamente.")
+        return
+
+    logger.info("URL resolved for source registration", original_url=normalized_url, resolved_feed_url=resolved_feed_url)
 
     try:
         existing_feeds = _fetch_user_feeds(user_id)
@@ -114,31 +383,26 @@ async def addgroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             if feed.get("url")
         }
 
-        if normalized_url in existing_urls:
+        if resolved_feed_url in existing_urls:
+            logger.info("Feed already registered", user_id=user_id, feed_url=resolved_feed_url)
             await update.message.reply_text("Este feed ya está registrado en tus grupos.")
             return
 
-        if len(existing_feeds) >= MAX_FEEDS_PER_USER:
-            await update.message.reply_text(
-                f"Has alcanzado el límite de {MAX_FEEDS_PER_USER} feeds por usuario. Elimina uno antes de añadir otro."
-            )
-            return
-
-        validation = feed_parser.validate_feed_source(normalized_url)
+        validation = feed_parser.validate_feed_source(resolved_feed_url)
         if not validation.get("valid", False):
-            logger.warning("El feed no pudo validarse: {} - {}", normalized_url, validation.get("error"))
+            logger.warning("El feed no pudo validarse: {} - {}", resolved_feed_url, validation.get("error"))
             await update.message.reply_text(
-                "No pude validar ese RSS. " + (validation.get("error") or "Comprueba que la URL sea un feed válido y accesible.")
+                "No pude validar esa fuente. " + (validation.get("error") or "Comprueba que la URL sea válida y accesible.")
             )
             return
 
         database.add_user(user_id, update.effective_user.username or "")
-        feed_id = database.add_feed(user_id=user_id, url=normalized_url)
+        feed_id = database.add_feed(user_id=user_id, url=resolved_feed_url)
         if not feed_id:
             logger.error(
                 "No se pudo guardar el feed en Supabase para el usuario {user_id}: {normalized_url}",
                 user_id=user_id,
-                normalized_url=normalized_url,
+                normalized_url=resolved_feed_url,
             )
             await update.message.reply_text("No se pudo guardar el feed en este momento. Inténtalo más tarde.")
             return
@@ -146,10 +410,10 @@ async def addgroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         logger.info(
             "Feed añadido por usuario {user_id}: {normalized_url}",
             user_id=user_id,
-            normalized_url=normalized_url,
+            normalized_url=resolved_feed_url,
         )
         await update.message.reply_text(
-            f"✅ Feed añadido correctamente.\nID: {feed_id}\nURL: {normalized_url}"
+            f"✅ Feed añadido correctamente.\nID: {feed_id}\nURL: {resolved_feed_url}"
         )
     except Exception as exc:
         logger.exception(
@@ -159,8 +423,24 @@ async def addgroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await update.message.reply_text("No se pudo guardar el feed en este momento. Inténtalo más tarde.")
 
 
+async def cancel_add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Cancela el flujo guiado para alta de fuente."""
+    _log_command_entry("cancel_add_source", update, context.args)
+    await update.message.reply_text("Operación cancelada. Puedes volver al menú con /start.")
+    return ConversationHandler.END
+
+
+async def waiting_url_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Recibe y procesa la URL pegada por el usuario en el flujo guiado."""
+    _log_command_entry("waiting_url_message", update)
+    raw_url = (update.message.text or "").strip()
+    await _addgroup_from_raw_url(update, raw_url)
+    return ConversationHandler.END
+
+
 async def groups_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Lista los feeds del usuario actual."""
+    _log_command_entry("groups_command", update, context.args)
     user_id = _get_user_id(update)
     if not user_id:
         await update.message.reply_text("No pude identificar tu usuario. Inténtalo de nuevo.")
@@ -168,6 +448,7 @@ async def groups_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     try:
         feeds = _fetch_user_feeds(user_id)
+        logger.debug("User feeds loaded", user_id=user_id, feed_count=len(feeds))
         if not feeds:
             await update.message.reply_text("No tienes feeds registrados aún. Usa /addgroup para añadir uno.")
             return
@@ -188,6 +469,7 @@ async def groups_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def removegroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Elimina un feed RSS del usuario actual."""
+    _log_command_entry("removegroup_command", update, context.args)
     user_id = _get_user_id(update)
     if not user_id:
         await update.message.reply_text("No pude identificar tu usuario. Inténtalo de nuevo.")
@@ -227,6 +509,7 @@ async def removegroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def pausegroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Pausa un feed RSS del usuario actual."""
+    _log_command_entry("pausegroup_command", update, context.args)
     user_id = _get_user_id(update)
     if not user_id:
         await update.message.reply_text("No pude identificar tu usuario. Inténtalo de nuevo.")
@@ -266,6 +549,7 @@ async def pausegroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def resumegroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Reanuda un feed RSS del usuario actual."""
+    _log_command_entry("resumegroup_command", update, context.args)
     user_id = _get_user_id(update)
     if not user_id:
         await update.message.reply_text("No pude identificar tu usuario. Inténtalo de nuevo.")
@@ -305,21 +589,23 @@ async def resumegroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def echo_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Responde con el mismo texto que el usuario (solo para pruebas)."""
+    _log_command_entry("echo_message", update)
     text = update.message.text
     await update.message.reply_text(f"Echo: {text}")
 
 
-async def handle_quick_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_quick_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Responde al botón de añadir un grupo o feed."""
+    _log_command_entry("handle_quick_add", update)
     query = update.callback_query
-    await query.answer("Puedes añadir un feed con /addgroup [URL_del_feed_RSS].")
-    await query.message.reply_text(
-        "Para añadir un grupo o feed, usa:\n\n/addgroup [URL_del_feed_RSS]\n\nEjemplo:\n/addgroup https://example.com/feed"
-    )
+    await query.answer()
+    await query.message.reply_text(_get_add_source_prompt_text())
+    return WAITING_URL
 
 
 async def handle_tutorial(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Muestra un tutorial breve para el usuario."""
+    _log_command_entry("handle_tutorial", update)
     query = update.callback_query
     await query.answer()
     tutorial_text = (
@@ -334,6 +620,7 @@ async def handle_tutorial(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def handle_remind_later(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Responde al botón de recordar más tarde."""
+    _log_command_entry("handle_remind_later", update)
     query = update.callback_query
     await query.answer("Te recordaremos más tarde.")
     await query.message.reply_text(
@@ -343,6 +630,7 @@ async def handle_remind_later(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def handle_generate_alert(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Maneja la generación de respuesta para una alerta concreta."""
+    _log_command_entry("handle_generate_alert", update)
     query = update.callback_query
     feed_id = None
     if context.matches:
@@ -358,25 +646,396 @@ async def handle_generate_alert(update: Update, context: ContextTypes.DEFAULT_TY
     await query.message.reply_text(message)
 
 
+async def handle_menu_add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Maneja la acción del menú principal para añadir una fuente."""
+    _log_command_entry("handle_menu_add_source", update)
+    query = update.callback_query
+    await query.answer()
+    await query.message.reply_text(_get_add_source_prompt_text())
+    return WAITING_URL
+
+
+async def handle_menu_my_sources(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Maneja la acción del menú principal para listar fuentes del usuario."""
+    _log_command_entry("handle_menu_my_sources", update)
+    query = update.callback_query
+    await query.answer()
+
+    user_id = _get_user_id(update)
+    if not user_id:
+        await query.message.reply_text("No pude identificar tu usuario. Inténtalo de nuevo.")
+        return
+
+    try:
+        feeds = _fetch_user_feeds(user_id)
+        if not feeds:
+            await query.message.reply_text("No tienes fuentes registradas todavía. Usa ➕ Añadir fuente para empezar.")
+            return
+
+        for feed in feeds:
+            card_text, card_markup = _build_feed_card(feed)
+            await query.message.reply_text(card_text, reply_markup=card_markup)
+    except Exception:
+        logger.exception(
+            "Error al listar fuentes del menú para usuario {user_id}",
+            user_id=user_id,
+        )
+        await query.message.reply_text("No se pudieron cargar tus fuentes en este momento.")
+
+
+async def subscription_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Muestra el panel de suscripción desde comando."""
+    _log_command_entry("subscription_command", update, context.args)
+    user_id = _get_user_id(update)
+    if not user_id:
+        await update.message.reply_text("No pude identificar tu usuario. Inténtalo de nuevo.")
+        return
+
+    try:
+        summary = _build_subscription_summary_text(user_id)
+        await update.message.reply_text(summary, parse_mode="Markdown", reply_markup=_build_subscription_markup())
+    except Exception:
+        logger.exception("Error al cargar panel de suscripción", user_id=user_id)
+        await update.message.reply_text("No se pudo cargar tu suscripción en este momento.")
+
+
+async def handle_menu_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Maneja la acción del menú principal para mostrar la suscripción."""
+    _log_command_entry("handle_menu_subscription", update)
+    query = update.callback_query
+    await query.answer()
+
+    user_id = _get_user_id(update)
+    if not user_id:
+        await query.message.reply_text("No pude identificar tu usuario. Inténtalo de nuevo.")
+        return
+
+    try:
+        summary = _build_subscription_summary_text(user_id)
+        await query.message.reply_text(summary, parse_mode="Markdown", reply_markup=_build_subscription_markup())
+    except Exception:
+        logger.exception("Error al mostrar menú de suscripción", user_id=user_id)
+        await query.message.reply_text("No se pudo cargar tu suscripción en este momento.")
+
+
+async def handle_subscription_contract(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Muestra selector de plan para contratar una suscripción."""
+    _log_command_entry("handle_subscription_contract", update)
+    query = update.callback_query
+    await query.answer()
+    await query.message.reply_text(
+        "Selecciona el plan que quieres contratar:",
+        reply_markup=_build_subscription_checkout_markup(),
+    )
+
+
+async def handle_subscription_change(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Muestra selector de plan para cambio de suscripción."""
+    _log_command_entry("handle_subscription_change", update)
+    query = update.callback_query
+    await query.answer()
+    await query.message.reply_text(
+        "Selecciona el nuevo plan para realizar el cambio:",
+        reply_markup=_build_subscription_checkout_markup(),
+    )
+
+
+async def handle_subscription_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Crea una sesión de checkout de Stripe para el plan seleccionado."""
+    _log_command_entry("handle_subscription_checkout", update)
+    query = update.callback_query
+    await query.answer()
+
+    user_id = _get_user_id(update)
+    if not user_id:
+        await query.message.reply_text("No pude identificar tu usuario. Inténtalo de nuevo.")
+        return
+
+    selected_plan = None
+    if context.matches:
+        selected_plan = context.matches[0].group(1)
+    elif query.data.startswith("sub_checkout_"):
+        selected_plan = query.data.replace("sub_checkout_", "", 1)
+
+    if selected_plan is None:
+        await query.message.reply_text("No pude identificar el plan seleccionado.")
+        return
+
+    try:
+        plan = Plan(selected_plan)
+        subscription = get_subscription_service().get_current_subscription(user_id)
+        session = get_stripe_service().create_checkout_session(
+            user_id=user_id,
+            plan=plan,
+            customer_id=subscription.stripe_customer_id,
+        )
+        checkout_markup = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🔐 Abrir checkout seguro", url=session.url)]]
+        )
+        await query.message.reply_text(
+            f"Checkout preparado para el plan {plan.value}. Completa el pago en Stripe:",
+            reply_markup=checkout_markup,
+        )
+    except StripeIntegrationError as exc:
+        await query.message.reply_text(f"No pude abrir checkout: {exc}")
+    except ValueError:
+        await query.message.reply_text("El plan seleccionado no es válido.")
+    except Exception:
+        logger.exception("Error creando checkout de suscripción", user_id=user_id, selected_plan=selected_plan)
+        await query.message.reply_text("No se pudo crear la sesión de checkout en este momento.")
+
+
+async def _send_customer_portal_link(update: Update, intro_text: str) -> None:
+    """Envía un enlace al Stripe Customer Portal para autogestión del usuario."""
+    query = update.callback_query
+    user_id = _get_user_id(update)
+    if not user_id:
+        await query.message.reply_text("No pude identificar tu usuario. Inténtalo de nuevo.")
+        return
+
+    try:
+        subscription = get_subscription_service().get_current_subscription(user_id)
+        if not subscription.stripe_customer_id:
+            await query.message.reply_text("Todavía no tienes un cliente de Stripe asociado a tu cuenta.")
+            return
+
+        portal_session = get_stripe_service().create_customer_portal_session(subscription.stripe_customer_id)
+        markup = InlineKeyboardMarkup([[InlineKeyboardButton("🌐 Abrir Stripe Portal", url=portal_session.url)]])
+        await query.message.reply_text(intro_text, reply_markup=markup)
+    except StripeIntegrationError as exc:
+        await query.message.reply_text(f"No pude abrir Stripe Portal: {exc}")
+    except Exception:
+        logger.exception("Error creando sesión de customer portal", user_id=user_id)
+        await query.message.reply_text("No se pudo abrir Stripe Portal en este momento.")
+
+
+async def handle_subscription_cancel_renewal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Guía al usuario para cancelar renovación desde Stripe Customer Portal."""
+    _log_command_entry("handle_subscription_cancel_renewal", update)
+    query = update.callback_query
+    await query.answer()
+    await _send_customer_portal_link(
+        update,
+        "Abre Stripe Portal para activar la cancelación al final del periodo actual.",
+    )
+
+
+async def handle_subscription_open_portal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Abre el Stripe Customer Portal para autogestión."""
+    _log_command_entry("handle_subscription_open_portal", update)
+    query = update.callback_query
+    await query.answer()
+    await _send_customer_portal_link(update, "Gestiona tu suscripción desde Stripe Portal:")
+
+
+def _parse_feed_id_from_callback_data(callback_data: str, prefix: str) -> Optional[int]:
+    """Extrae el id interno del feed desde el callback_data."""
+    if not callback_data.startswith(prefix):
+        return None
+    try:
+        return int(callback_data[len(prefix) :])
+    except ValueError:
+        return None
+
+
+async def _handle_feed_status_toggle(update: Update, is_active: bool, action_name: str, callback_prefix: str) -> None:
+    """Actualiza el estado del feed y refresca la tarjeta en el mismo mensaje."""
+    _log_command_entry(action_name, update)
+    query = update.callback_query
+    user_id = _get_user_id(update)
+    if not user_id:
+        await query.answer("No pude identificar tu usuario.", show_alert=True)
+        return
+
+    callback_data = query.data or ""
+    feed_id = _parse_feed_id_from_callback_data(callback_data, callback_prefix)
+    if feed_id is None:
+        await query.answer("No pude identificar la fuente.", show_alert=True)
+        return
+
+    try:
+        feed = _find_user_feed(user_id, feed_id)
+        if not feed:
+            await query.answer("No encontré esa fuente en tu cuenta.", show_alert=True)
+            return
+
+        _update_user_feed_status(user_id, feed_id, is_active)
+        updated_feed = dict(feed)
+        updated_feed["is_active"] = is_active
+        card_text, card_markup = _build_feed_card(updated_feed)
+
+        await query.edit_message_text(card_text, reply_markup=card_markup)
+        await query.answer("Estado actualizado")
+    except Exception:
+        logger.exception(
+            "Error al actualizar estado de feed desde callback",
+            user_id=user_id,
+            feed_id=feed_id,
+            is_active=is_active,
+        )
+        await query.answer("No se pudo actualizar el estado.", show_alert=True)
+
+
+async def handle_feed_pause_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Pausa un feed desde la tarjeta inline."""
+    await _handle_feed_status_toggle(
+        update=update,
+        is_active=False,
+        action_name="handle_feed_pause_callback",
+        callback_prefix="feed_pause_",
+    )
+
+
+async def handle_feed_resume_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Reanuda un feed desde la tarjeta inline."""
+    await _handle_feed_status_toggle(
+        update=update,
+        is_active=True,
+        action_name="handle_feed_resume_callback",
+        callback_prefix="feed_resume_",
+    )
+
+
+async def handle_feed_delete_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Solicita confirmación antes de eliminar una fuente."""
+    _log_command_entry("handle_feed_delete_request", update)
+    query = update.callback_query
+    user_id = _get_user_id(update)
+    if not user_id:
+        await query.answer("No pude identificar tu usuario.", show_alert=True)
+        return
+
+    feed_id = _parse_feed_id_from_callback_data(query.data or "", "feed_delete_")
+    if feed_id is None:
+        await query.answer("No pude identificar la fuente.", show_alert=True)
+        return
+
+    feed = _find_user_feed(user_id, feed_id)
+    if not feed:
+        await query.answer("No encontré esa fuente en tu cuenta.", show_alert=True)
+        return
+
+    text, markup = _build_delete_confirmation(feed)
+    await query.edit_message_text(text, reply_markup=markup)
+    await query.answer()
+
+
+async def handle_feed_delete_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Cancela la eliminación y restaura la tarjeta original del feed."""
+    _log_command_entry("handle_feed_delete_cancel", update)
+    query = update.callback_query
+    user_id = _get_user_id(update)
+    if not user_id:
+        await query.answer("No pude identificar tu usuario.", show_alert=True)
+        return
+
+    feed_id = _parse_feed_id_from_callback_data(query.data or "", "feed_delete_cancel_")
+    if feed_id is None:
+        await query.answer("No pude identificar la fuente.", show_alert=True)
+        return
+
+    feed = _find_user_feed(user_id, feed_id)
+    if not feed:
+        await query.answer("La fuente ya no está disponible.", show_alert=True)
+        return
+
+    card_text, card_markup = _build_feed_card(feed)
+    await query.edit_message_text(card_text, reply_markup=card_markup)
+    await query.answer("Eliminación cancelada")
+
+
+async def handle_feed_delete_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Confirma la eliminación de una fuente y refresca el listado restante."""
+    _log_command_entry("handle_feed_delete_confirm", update)
+    query = update.callback_query
+    user_id = _get_user_id(update)
+    if not user_id:
+        await query.answer("No pude identificar tu usuario.", show_alert=True)
+        return
+
+    feed_id = _parse_feed_id_from_callback_data(query.data or "", "feed_delete_confirm_")
+    if feed_id is None:
+        await query.answer("No pude identificar la fuente.", show_alert=True)
+        return
+
+    try:
+        feed = _find_user_feed(user_id, feed_id)
+        if not feed:
+            await query.answer("La fuente ya no está disponible.", show_alert=True)
+            return
+
+        _delete_user_feed(user_id, feed_id)
+        remaining_feeds = [item for item in _fetch_user_feeds(user_id) if item.get("id") != feed_id]
+        remaining_text = _build_remaining_feeds_text(remaining_feeds)
+        final_text = f"✅ Fuente eliminada correctamente.\n\n{remaining_text}"
+        await query.edit_message_text(final_text)
+        await query.answer("Fuente eliminada")
+    except Exception:
+        logger.exception(
+            "Error al eliminar feed desde callback",
+            user_id=user_id,
+            feed_id=feed_id,
+        )
+        await query.answer("No se pudo eliminar la fuente.", show_alert=True)
+
+
+async def handle_menu_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Maneja la acción de ayuda desde el menú principal."""
+    _log_command_entry("handle_menu_help", update)
+    query = update.callback_query
+    await query.answer()
+    await query.message.reply_text(_get_help_text(), parse_mode="Markdown")
+
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Registra errores y notifica al desarrollador (opcional)."""
+    logger.debug("Entering error_handler")
     logger.error(f"Excepción mientras se manejaba una actualización: {context.error}")
+    try:
+        trace = get_trace_service()
+        await trace.start(type=EventType.TELEGRAM, name="Handler error", input_payload={"error": str(context.error)})
+        await trace.error("", error=str(context.error))
+    except Exception:
+        pass
     if update and hasattr(update, "message") and update.message:
         await update.message.reply_text("Ocurrió un error inesperado. Por favor, inténtalo de nuevo más tarde.")
 
 
 def register_handlers(application: Application) -> None:
     """Registra los handlers del bot en la aplicación."""
+    logger.info("Registering Telegram handlers")
+    add_source_conversation = ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(handle_menu_add_source, pattern=f"^{MENU_ADD_SOURCE}$"),
+            CallbackQueryHandler(handle_quick_add, pattern="^quick_add$"),
+        ],
+        states={
+            WAITING_URL: [MessageHandler(filters.TEXT & ~filters.COMMAND, waiting_url_message)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel_add_source)],
+    )
+
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("subscription", subscription_command))
     application.add_handler(CommandHandler("addgroup", addgroup_command))
-    application.add_handler(CommandHandler("groups", groups_command))
-    application.add_handler(CommandHandler("removegroup", removegroup_command))
-    application.add_handler(CommandHandler("pausegroup", pausegroup_command))
-    application.add_handler(CommandHandler("resumegroup", resumegroup_command))
-    application.add_handler(CallbackQueryHandler(handle_quick_add, pattern="^quick_add$"))
+    application.add_handler(add_source_conversation)
+    application.add_handler(CallbackQueryHandler(handle_menu_my_sources, pattern=f"^{MENU_MY_SOURCES}$"))
+    application.add_handler(CallbackQueryHandler(handle_menu_subscription, pattern=f"^{MENU_SUBSCRIPTION}$"))
+    application.add_handler(CallbackQueryHandler(handle_menu_help, pattern=f"^{MENU_HELP}$"))
+    application.add_handler(CallbackQueryHandler(handle_subscription_contract, pattern=f"^{SUB_CONTRACT}$"))
+    application.add_handler(CallbackQueryHandler(handle_subscription_change, pattern=f"^{SUB_CHANGE}$"))
+    application.add_handler(CallbackQueryHandler(handle_subscription_cancel_renewal, pattern=f"^{SUB_CANCEL_RENEWAL}$"))
+    application.add_handler(CallbackQueryHandler(handle_subscription_open_portal, pattern=f"^{SUB_OPEN_PORTAL}$"))
+    application.add_handler(CallbackQueryHandler(handle_subscription_checkout, pattern=r"^sub_checkout_([a-z_]+)$"))
+    application.add_handler(CallbackQueryHandler(handle_feed_pause_callback, pattern=r"^feed_pause_(\d+)$"))
+    application.add_handler(CallbackQueryHandler(handle_feed_resume_callback, pattern=r"^feed_resume_(\d+)$"))
+    application.add_handler(CallbackQueryHandler(handle_feed_delete_confirm, pattern=r"^feed_delete_confirm_(\d+)$"))
+    application.add_handler(CallbackQueryHandler(handle_feed_delete_cancel, pattern=r"^feed_delete_cancel_(\d+)$"))
+    application.add_handler(CallbackQueryHandler(handle_feed_delete_request, pattern=r"^feed_delete_(\d+)$"))
     application.add_handler(CallbackQueryHandler(handle_tutorial, pattern="^tutorial$"))
     application.add_handler(CallbackQueryHandler(handle_remind_later, pattern="^remind_later$"))
     application.add_handler(CallbackQueryHandler(handle_generate_alert, pattern=r"^generate_alert_(\d+)$"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo_message))
     application.add_error_handler(error_handler)
+    logger.info("Telegram handlers registered successfully")

@@ -28,6 +28,7 @@ APScheduler==3.11.0
 
 # HTTP
 httpx==0.28.1
+stripe==10.9.0
 
 # IA
 openai==1.97.1
@@ -37,3 +38,12 @@ tenacity==9.1.2
 
 # Logging
 loguru==0.7.3
+
+# Templating
+jinja2==3.1.2
+
+# Testing
+pytest==8.3.3
+pytest-asyncio==0.24.0
+pytest-mock==3.14.0
+pytest-cov==5.0.0
