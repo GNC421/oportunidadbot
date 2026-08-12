@@ -450,15 +450,13 @@ async def groups_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         feeds = _fetch_user_feeds(user_id)
         logger.debug("User feeds loaded", user_id=user_id, feed_count=len(feeds))
         if not feeds:
-            await update.message.reply_text("No tienes feeds registrados aún. Usa /addgroup para añadir uno.")
+            await update.message.reply_text("No tienes fuentes registradas todavía. Usa ➕ Añadir fuente para empezar.")
             return
 
-        lines = ["📡 Tus feeds:"]
+        # Mostrar cada feed como tarjeta (mismo formato que 'Mis Fuentes')
         for feed in feeds:
-            status = "🟢 Activo" if feed.get("is_active", True) else "🟡 Pausado"
-            lines.append(f"- ID {feed.get('id')}: {status}\n  {feed.get('url', 'Sin URL')}")
-
-        await update.message.reply_text("\n".join(lines))
+            card_text, card_markup = _build_feed_card(feed)
+            await update.message.reply_text(card_text, reply_markup=card_markup)
     except Exception as exc:
         logger.exception(
             "Error al listar feeds del usuario {user_id}",
