@@ -319,6 +319,17 @@ def _build_remaining_feeds_text(feeds: list[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+async def _send_feeds_cards(message_obj, feeds: list[Dict[str, Any]]) -> None:
+    """Envía una serie de mensajes con la tarjeta y botones para cada feed.
+
+    `message_obj` debe exponer `reply_text(text, reply_markup=...)`, por ejemplo
+    `update.message` o `callback_query.message`.
+    """
+    for feed in feeds:
+        card_text, card_markup = _build_feed_card(feed)
+        await message_obj.reply_text(card_text, reply_markup=card_markup)
+
+
 def _delete_user_feed(user_id: int, feed_id: int) -> None:
     """Elimina un feed del usuario mediante la capa de persistencia."""
     database.supabase.table("feeds").delete().eq("id", feed_id).eq("user_id", user_id).execute()
@@ -454,9 +465,7 @@ async def groups_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             return
 
         # Mostrar cada feed como tarjeta (mismo formato que 'Mis Fuentes')
-        for feed in feeds:
-            card_text, card_markup = _build_feed_card(feed)
-            await update.message.reply_text(card_text, reply_markup=card_markup)
+        await _send_feeds_cards(update.message, feeds)
     except Exception as exc:
         logger.exception(
             "Error al listar feeds del usuario {user_id}",
@@ -670,9 +679,7 @@ async def handle_menu_my_sources(update: Update, context: ContextTypes.DEFAULT_T
             await query.message.reply_text("No tienes fuentes registradas todavía. Usa ➕ Añadir fuente para empezar.")
             return
 
-        for feed in feeds:
-            card_text, card_markup = _build_feed_card(feed)
-            await query.message.reply_text(card_text, reply_markup=card_markup)
+        await _send_feeds_cards(query.message, feeds)
     except Exception:
         logger.exception(
             "Error al listar fuentes del menú para usuario {user_id}",
