@@ -97,11 +97,32 @@ def _get_help_text() -> str:
     """Texto de ayuda con los comandos actualmente soportados."""
     plans_text = _get_subscription_plans_text()
     return (
-        "📋 **Lista de comandos disponibles:**\n\n"
+        "📋 **Lista de comandos**\n\n"
+        "¿Qué es OportunidadBot?\n"
+        "Te ayuda a detectar oportunidades inmobiliarias monitorizando las fuentes que tú indiques. "
+        "Analiza automáticamente nuevas publicaciones y te envía sólo las que parecen relevantes.\n\n"
+        "¿Cómo empezar?\n"
+        "- Pulsa /start para abrir el menú principal o usa directamente /addgroup [URL].\n"
+        "- Proporciona la URL de la fuente que quieras monitorizar (página o feed).\n"
+        "- Si la URL es válida, el bot empezará a monitorizarla y te confirmará su alta.\n\n"
+        "Añadir una fuente\n"
+        "- Usa el botón ➕ Añadir fuente en el menú o escribe /addgroup [URL].\n"
+        "- El bot comprobará la URL y, si puede usarla, la añadirá a tus fuentes.\n\n"
+        "Gestionar tus fuentes\n"
+        "- Pulsa 📂 Mis fuentes en el menú para ver las que tienes configuradas.\n"
+        "- Desde cada fuente verás botones para: Pausar, Reanudar y Eliminar.\n"
+        "- No necesitas comandos técnicos: usa los botones para gestionar fácilmente.\n\n"
+        "Alertas\n"
+        "- Cuando se detecta una oportunidad recibirás una alerta con título y una breve descripción.\n"
+        "- Si hay precio o ubicación, también se muestran. Cada alerta incluye un botón "
+        "🔗 Ver anuncio para abrir el original.\n"
+        "- Objetivo: evitar revisar manualmente todas las publicaciones y recibir sólo oportunidades.\n\n"
+        "Comandos disponibles:\n"
         "/start - Mostrar menú principal\n"
         "/help - Mostrar esta ayuda\n"
         "/subscription - Ver y gestionar tu suscripción\n"
-        "/addgroup [URL] - Añadir un feed a partir de una URL soportada\n\n"
+        "/addgroup [URL] - Añadir una fuente\n"
+        "/groups - Mostrar tus fuentes configuradas\n\n"
         "💳 **Planes**\n"
         f"{plans_text}"
     )
@@ -1019,6 +1040,7 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("subscription", subscription_command))
     application.add_handler(CommandHandler("addgroup", addgroup_command))
+    application.add_handler(CommandHandler("groups", groups_command))
     application.add_handler(add_source_conversation)
     application.add_handler(CallbackQueryHandler(handle_menu_my_sources, pattern=f"^{MENU_MY_SOURCES}$"))
     application.add_handler(CallbackQueryHandler(handle_menu_subscription, pattern=f"^{MENU_SUBSCRIPTION}$"))
