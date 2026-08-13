@@ -97,7 +97,7 @@ def _get_help_text() -> str:
     """Texto de ayuda con los comandos actualmente soportados."""
     plans_text = _get_subscription_plans_text()
     return (
-        "📋 **Lista de comandos**\n\n"
+        "📋 *Lista de comandos*\n\n"
         "¿Qué es OportunidadBot?\n"
         "Te ayuda a detectar oportunidades inmobiliarias monitorizando las fuentes que tú indiques. "
         "Analiza automáticamente nuevas publicaciones y te envía sólo las que parecen relevantes.\n\n"
