@@ -347,10 +347,7 @@ async def _send_feeds_cards(message_obj, feeds: list[Dict[str, Any]]) -> None:
     """
     for feed in feeds:
         card_text, card_markup = _build_feed_card(feed)
-        try:
-            logger.debug("Sending feed card", feed_id=feed.get("id"), has_markup=bool(card_markup))
-        except Exception:
-            logger.debug("Sending feed card (no metadata)")
+        logger.debug("Sending feed card feed_id={feed_id} has_markup={has_markup}", feed_id=feed.get("id"), has_markup=bool(card_markup))
         await message_obj.reply_text(card_text, reply_markup=card_markup)
 
 
