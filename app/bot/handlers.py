@@ -485,21 +485,7 @@ async def groups_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.message.reply_text("No tienes feeds registrados aún. Usa /addgroup para añadir uno.")
             return
 
-        # Reuse exactly the same callback handler used by the "Mis Fuentes" menu
-        # to ensure identical formatting, buttons and behavior.
-        from types import SimpleNamespace
-
-        fake_query = SimpleNamespace()
-        async def _answer(*_a, **_k):
-            return None
-
-        fake_query.answer = _answer
-        fake_query.message = update.message
-        fake_query.data = None
-
-        fake_update = SimpleNamespace(effective_user=update.effective_user, callback_query=fake_query)
-
-        await handle_menu_my_sources(fake_update, context)
+        await _send_feeds_cards(update.message, feeds)
     except Exception as exc:
         logger.exception(
             "Error al listar feeds del usuario {user_id}",
