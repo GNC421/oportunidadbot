@@ -340,6 +340,20 @@ def _build_remaining_feeds_text(feeds: list[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+async def _send_feeds_cards(message_obj, feeds: list[Dict[str, Any]]) -> None:
+    """Envía una tarjeta por feed con su `reply_markup` (botones).
+
+    Añadimos un log para depuración en runtime cuando se envía cada tarjeta.
+    """
+    for feed in feeds:
+        card_text, card_markup = _build_feed_card(feed)
+        try:
+            logger.debug("Sending feed card", feed_id=feed.get("id"), has_markup=bool(card_markup))
+        except Exception:
+            logger.debug("Sending feed card (no metadata)")
+        await message_obj.reply_text(card_text, reply_markup=card_markup)
+
+
 def _delete_user_feed(user_id: int, feed_id: int) -> None:
     """Elimina un feed del usuario mediante la capa de persistencia."""
     database.supabase.table("feeds").delete().eq("id", feed_id).eq("user_id", user_id).execute()
@@ -474,12 +488,21 @@ async def groups_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.message.reply_text("No tienes feeds registrados aún. Usa /addgroup para añadir uno.")
             return
 
-        lines = ["📡 Tus feeds:"]
-        for feed in feeds:
-            status = "🟢 Activo" if feed.get("is_active", True) else "🟡 Pausado"
-            lines.append(f"- ID {feed.get('id')}: {status}\n  {feed.get('url', 'Sin URL')}")
+        # Reuse exactly the same callback handler used by the "Mis Fuentes" menu
+        # to ensure identical formatting, buttons and behavior.
+        from types import SimpleNamespace
 
-        await update.message.reply_text("\n".join(lines))
+        fake_query = SimpleNamespace()
+        async def _answer(*_a, **_k):
+            return None
+
+        fake_query.answer = _answer
+        fake_query.message = update.message
+        fake_query.data = None
+
+        fake_update = SimpleNamespace(effective_user=update.effective_user, callback_query=fake_query)
+
+        await handle_menu_my_sources(fake_update, context)
     except Exception as exc:
         logger.exception(
             "Error al listar feeds del usuario {user_id}",
@@ -693,9 +716,7 @@ async def handle_menu_my_sources(update: Update, context: ContextTypes.DEFAULT_T
             await query.message.reply_text("No tienes fuentes registradas todavía. Usa ➕ Añadir fuente para empezar.")
             return
 
-        for feed in feeds:
-            card_text, card_markup = _build_feed_card(feed)
-            await query.message.reply_text(card_text, reply_markup=card_markup)
+        await _send_feeds_cards(query.message, feeds)
     except Exception:
         logger.exception(
             "Error al listar fuentes del menú para usuario {user_id}",

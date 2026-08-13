@@ -266,7 +266,8 @@ async def test_handlers_groups_with_data(fake_update_context, monkeypatch):
 
     await handlers.groups_command(update, context)
 
-    assert "ID 1" in replies[-1]["text"]
+    # groups now uses the same card format as 'Mis Fuentes'
+    assert replies[-1]["text"].startswith("🟢 rss.local")
 
 
 @pytest.mark.asyncio
