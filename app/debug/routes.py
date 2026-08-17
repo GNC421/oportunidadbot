@@ -15,6 +15,11 @@ import traceback
 
 from .trace_service import get_trace_service
 from .trace_models import EventType, EventState
+from pydantic import BaseModel
+from fastapi import HTTPException
+from loguru import logger
+
+from app.services.ai_classifier import classifier
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
@@ -218,3 +223,47 @@ async def debug_export(_auth: None = Depends(_require_admin)):
 async def debug_clear(_auth: None = Depends(_require_admin)):
     await trace_service.clear()
     return RedirectResponse(url="/debug", status_code=303)
+
+
+class AIClassifyRequest(BaseModel):
+    title: str
+    summary: str
+
+
+@router.post("/api/debug/ai/classify")
+async def debug_ai_classify(payload: AIClassifyRequest):
+    """Endpoint de testing que realiza una llamada directa a la IA (NVIDIA) y devuelve la respuesta cruda.
+
+    Esta ruta reutiliza exactamente la lógica de llamada de `app.services.ai_classifier.classifier`.
+    No forma parte del flujo de negocio: no toca DB, scheduler, orchestrator ni envía telegrams.
+    """
+    # Validar que exista API key configurada
+    if not getattr(classifier, "_api_key", None):
+        logger.error("AI classify endpoint: NVIDIA API key no configurada")
+        raise HTTPException(status_code=500, detail="AI API key not configured")
+
+    title = payload.title
+    summary = payload.summary
+
+    try:
+        # Respetar el timeout configurado por el classifier
+        import asyncio
+
+        timeout = getattr(classifier, "_timeout", 20.0)
+        coro = classifier._call_nvidia(title, summary)
+        response = await asyncio.wait_for(coro, timeout=timeout)
+    except asyncio.TimeoutError:
+        logger.exception("Timeout llamando a la API de IA desde endpoint debug")
+        raise HTTPException(status_code=504, detail="AI request timed out")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Error llamando a la API de IA desde endpoint debug: %s", exc)
+        raise HTTPException(status_code=502, detail="AI service error")
+
+    # Respuesta inesperada / vacía
+    if response is None or (isinstance(response, str) and not response.strip()):
+        logger.warning("AI classify returned empty response")
+        raise HTTPException(status_code=502, detail="Empty AI response")
+
+    return JSONResponse(content={"response": response})

@@ -97,11 +97,32 @@ def _get_help_text() -> str:
     """Texto de ayuda con los comandos actualmente soportados."""
     plans_text = _get_subscription_plans_text()
     return (
-        "📋 **Lista de comandos disponibles:**\n\n"
+        "📋 *Lista de comandos*\n\n"
+        "¿Qué es OportunidadBot?\n"
+        "Te ayuda a detectar oportunidades inmobiliarias monitorizando las fuentes que tú indiques. "
+        "Analiza automáticamente nuevas publicaciones y te envía sólo las que parecen relevantes.\n\n"
+        "¿Cómo empezar?\n"
+        "- Pulsa /start para abrir el menú principal o usa directamente /addgroup [URL].\n"
+        "- Proporciona la URL de la fuente que quieras monitorizar (página o feed).\n"
+        "- Si la URL es válida, el bot empezará a monitorizarla y te confirmará su alta.\n\n"
+        "Añadir una fuente\n"
+        "- Usa el botón ➕ Añadir fuente en el menú o escribe /addgroup [URL].\n"
+        "- El bot comprobará la URL y, si puede usarla, la añadirá a tus fuentes.\n\n"
+        "Gestionar tus fuentes\n"
+        "- Pulsa 📂 Mis fuentes en el menú para ver las que tienes configuradas.\n"
+        "- Desde cada fuente verás botones para: Pausar, Reanudar y Eliminar.\n"
+        "- No necesitas comandos técnicos: usa los botones para gestionar fácilmente.\n\n"
+        "Alertas\n"
+        "- Cuando se detecta una oportunidad recibirás una alerta con título y una breve descripción.\n"
+        "- Si hay precio o ubicación, también se muestran. Cada alerta incluye un botón "
+        "🔗 Ver anuncio para abrir el original.\n"
+        "- Objetivo: evitar revisar manualmente todas las publicaciones y recibir sólo oportunidades.\n\n"
+        "Comandos disponibles:\n"
         "/start - Mostrar menú principal\n"
         "/help - Mostrar esta ayuda\n"
         "/subscription - Ver y gestionar tu suscripción\n"
-        "/addgroup [URL] - Añadir un feed a partir de una URL soportada\n\n"
+        "/addgroup [URL] - Añadir una fuente\n"
+        "/groups - Mostrar tus fuentes configuradas\n\n"
         "💳 **Planes**\n"
         f"{plans_text}"
     )
@@ -319,6 +340,17 @@ def _build_remaining_feeds_text(feeds: list[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+async def _send_feeds_cards(message_obj, feeds: list[Dict[str, Any]]) -> None:
+    """Envía una tarjeta por feed con su `reply_markup` (botones).
+
+    Añadimos un log para depuración en runtime cuando se envía cada tarjeta.
+    """
+    for feed in feeds:
+        card_text, card_markup = _build_feed_card(feed)
+        logger.debug("Sending feed card feed_id={feed_id} has_markup={has_markup}", feed_id=feed.get("id"), has_markup=bool(card_markup))
+        await message_obj.reply_text(card_text, reply_markup=card_markup)
+
+
 def _delete_user_feed(user_id: int, feed_id: int) -> None:
     """Elimina un feed del usuario mediante la capa de persistencia."""
     database.supabase.table("feeds").delete().eq("id", feed_id).eq("user_id", user_id).execute()
@@ -450,15 +482,10 @@ async def groups_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         feeds = _fetch_user_feeds(user_id)
         logger.debug("User feeds loaded", user_id=user_id, feed_count=len(feeds))
         if not feeds:
-            await update.message.reply_text("No tienes feeds registrados aún. Usa /addgroup para añadir uno.")
+            await update.message.reply_text("No tienes fuentes registradas todavía. Usa ➕ Añadir fuente para empezar.")
             return
 
-        lines = ["📡 Tus feeds:"]
-        for feed in feeds:
-            status = "🟢 Activo" if feed.get("is_active", True) else "🟡 Pausado"
-            lines.append(f"- ID {feed.get('id')}: {status}\n  {feed.get('url', 'Sin URL')}")
-
-        await update.message.reply_text("\n".join(lines))
+        await _send_feeds_cards(update.message, feeds)
     except Exception as exc:
         logger.exception(
             "Error al listar feeds del usuario {user_id}",
@@ -672,9 +699,7 @@ async def handle_menu_my_sources(update: Update, context: ContextTypes.DEFAULT_T
             await query.message.reply_text("No tienes fuentes registradas todavía. Usa ➕ Añadir fuente para empezar.")
             return
 
-        for feed in feeds:
-            card_text, card_markup = _build_feed_card(feed)
-            await query.message.reply_text(card_text, reply_markup=card_markup)
+        await _send_feeds_cards(query.message, feeds)
     except Exception:
         logger.exception(
             "Error al listar fuentes del menú para usuario {user_id}",
@@ -1019,6 +1044,7 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("subscription", subscription_command))
     application.add_handler(CommandHandler("addgroup", addgroup_command))
+    application.add_handler(CommandHandler("groups", groups_command))
     application.add_handler(add_source_conversation)
     application.add_handler(CallbackQueryHandler(handle_menu_my_sources, pattern=f"^{MENU_MY_SOURCES}$"))
     application.add_handler(CallbackQueryHandler(handle_menu_subscription, pattern=f"^{MENU_SUBSCRIPTION}$"))
