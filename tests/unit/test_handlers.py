@@ -123,7 +123,7 @@ async def test_handlers_groups_no_feeds(fake_update_context, monkeypatch):
 
     await handlers.groups_command(update, context)
 
-    assert "No tienes feeds" in replies[-1]["text"]
+    assert "No tienes fuentes" in replies[-1]["text"]
 
 
 @pytest.mark.asyncio

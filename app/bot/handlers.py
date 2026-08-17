@@ -482,7 +482,7 @@ async def groups_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         feeds = _fetch_user_feeds(user_id)
         logger.debug("User feeds loaded", user_id=user_id, feed_count=len(feeds))
         if not feeds:
-            await update.message.reply_text("No tienes feeds registrados aún. Usa /addgroup para añadir uno.")
+            await update.message.reply_text("No tienes fuentes registradas todavía. Usa ➕ Añadir fuente para empezar.")
             return
 
         await _send_feeds_cards(update.message, feeds)
