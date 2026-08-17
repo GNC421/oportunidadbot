@@ -31,7 +31,7 @@ def test_handlers_feed_display_name_for_milanuncios():
     handlers = _load_handlers_module()
     # milanuncios is not specially handled by SourceDisplayNameService, so should return host
     display = handlers._feed_display_name("https://www.milanuncios.com/casas-en-murcia/?demanda=s&vendedor=part")
-    assert "milanuncios.com" in display
+    assert "Demanda Casas" in display
 
 
 def test_handlers_addgroup_with_milanuncios_url(monkeypatch):

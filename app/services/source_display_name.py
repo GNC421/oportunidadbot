@@ -28,6 +28,9 @@ class SourceDisplayNameService:
         if cls._is_tablon_host(netloc):
             return cls._build_tablon_name(parsed.path or "", parsed.query or "")
 
+        if "milanuncios.com" in netloc:
+            return cls._build_milan_name(parsed.path or "", parsed.query or "")
+
         reddit_name = cls._build_reddit_name(netloc, parsed.path or "")
         if reddit_name:
             return reddit_name
@@ -53,6 +56,31 @@ class SourceDisplayNameService:
             if subreddit:
                 return f"Reddit {subreddit}"
         return None
+
+    @classmethod
+    def _build_milan_name(cls, path: str, query: str) -> str:
+        path_parts = [part for part in path.split("/") if part]
+        if not path_parts:
+            return "milanuncios.com"
+
+        raw_slug = re.sub(r"\.[a-zA-Z0-9]+$", "", path_parts[0]).strip("-")
+        if not raw_slug:
+            return "milanuncios.com"
+
+        category_slug, location_slug = cls._split_category_and_location(raw_slug)
+        category_title = cls._humanize_title(category_slug)
+        location_title = cls._humanize_title(location_slug) if location_slug else ""
+
+        # include simple query hints: demanda often identifies a search type
+        query_params = parse_qs(query, keep_blank_values=True)
+        demanda = (query_params.get("demanda") or [""])[0]
+        prefix = ""
+        if demanda and demanda.lower() in ("s", "1", "true"):
+            prefix = "Demanda "
+
+        if location_title:
+            return f"🏠 {prefix}{category_title} · {location_title}".strip()
+        return f"🏠 {prefix}{category_title}".strip()
 
     @classmethod
     def _build_tablon_name(cls, path: str, query: str) -> str:
