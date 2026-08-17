@@ -41,6 +41,28 @@ async def test_start_and_help_commands():
 
 
 @pytest.mark.asyncio
+async def test_help_message_content():
+    handlers = _load_handlers_module()
+    update, context, replies = _build_message_update()
+
+    await handlers.help_command(update, context)
+    assert replies
+    text = replies[-1]["text"]
+
+    # Contenido esencial visible para el usuario
+    assert "Añadir una fuente" in text
+    assert "Mis fuentes" in text
+    assert "Pausar" in text
+    assert "Reanudar" in text
+    assert "Eliminar" in text
+    assert "Ver anuncio" in text
+
+    # Se debe enviar en modo Markdown
+    kwargs = replies[-1]["kwargs"]
+    assert kwargs.get("parse_mode") == "Markdown"
+
+
+@pytest.mark.asyncio
 async def test_addgroup_various_paths(monkeypatch):
     handlers = _load_handlers_module()
     update, context, replies = _build_message_update()
