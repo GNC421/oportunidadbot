@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     # Admin
     ADMIN_API_KEY: Optional[str] = Field(None, description="Clave API para endpoints administrativos")
 
+    # Private web application
+    WEB_SESSION_SECRET: Optional[str] = Field(None, description="Secreto para firmar sesiones de la aplicación web")
+    WEB_SESSION_MAX_AGE_SECONDS: int = Field(28800, description="Duración máxima de la sesión web en segundos")
+    WEB_SESSION_COOKIE_SECURE: bool = Field(False, description="Enviar la cookie de sesión web solo por HTTPS")
+    WEB_APP_ORIGIN: Optional[str] = Field(None, description="Origen permitido de la aplicación web privada")
+
     # Stripe (future use)
     STRIPE_SECRET_KEY: Optional[str] = Field(None, description="Secret key de Stripe")
     STRIPE_WEBHOOK_SECRET: Optional[str] = Field(None, description="Secreto de webhooks de Stripe")

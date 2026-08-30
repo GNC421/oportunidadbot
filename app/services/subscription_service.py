@@ -63,6 +63,13 @@ class SubscriptionService:
         subscription = self.get_current_subscription(user_id)
         return any(feature.lower() == normalized_feature for feature in subscription.plan_definition.features)
 
+    def can_access_web_app(self, user_id: int) -> bool:
+        """Indica si la suscripción actual permite acceder a la aplicación web privada."""
+        return self.get_current_subscription(user_id).plan in {
+            Plan.PROFESSIONAL,
+            Plan.ENTERPRISE,
+        }
+
     def get_remaining_sources(self, user_id: int) -> Optional[int]:
         subscription = self.get_current_subscription(user_id)
         source_limit = subscription.plan_definition.source_limit

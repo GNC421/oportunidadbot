@@ -310,6 +310,17 @@ def get_alert_by_url(post_url: str) -> Optional[Dict]:
         logger.error(f"Error al obtener alerta: {e}")
         return None
 
+
+def get_user_alerts(user_id: int, limit: int = 50) -> List[Dict[str, Any]]:
+    """Obtiene alertas de un usuario sin exponer registros de otros usuarios."""
+    try:
+        safe_limit = max(1, min(limit, 100))
+        result = supabase.table('alerts').select('*').eq('user_id', user_id).limit(safe_limit).execute()
+        return result.data if result.data is not None else []
+    except Exception as e:
+        logger.error(f"Error al obtener alertas del usuario {user_id}: {e}")
+        return []
+
 def mark_alert_sent(alert_id: int):
     """Marca una alerta como enviada"""
     trace = get_trace_service()

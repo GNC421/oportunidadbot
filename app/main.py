@@ -16,6 +16,7 @@ from .services.stripe_service import StripeIntegrationError, get_stripe_service
 from .subscriptions.entities import Plan
 from fastapi import Depends
 from fastapi.security import APIKeyHeader
+from fastapi.middleware.cors import CORSMiddleware
 from app.services.ai_classifier import classifier
 
 # Variable global para mantener la aplicación del bot
@@ -107,6 +108,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+if settings.WEB_APP_ORIGIN:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[settings.WEB_APP_ORIGIN],
+        allow_credentials=True,
+        allow_methods=["GET", "POST"],
+        allow_headers=["Content-Type"],
+    )
+
 # Debug dashboard routes (optional, powered by app/debug)
 try:
     from app.debug.routes import router as debug_router  # type: ignore
@@ -114,6 +124,10 @@ try:
 except Exception:
     # If tracing package is not available or fails to initialize, skip silently
     logger.debug("Debug router not available")
+
+from app.web.routes import router as web_router
+
+app.include_router(web_router)
 
 # --- Endpoints ---
 
