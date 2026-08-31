@@ -50,10 +50,47 @@ class FeedResponse(BaseModel):
 async def start_telegram_login() -> RedirectResponse:
     from app.web.auth import _require_oidc_config
 
-    client_id, _, redirect_uri, _ = _require_oidc_config()
+    client_id, _, redirect_uri, web_app_origin = _require_oidc_config()
     state_cookie, state, nonce, challenge = create_login_state()
-    authorization_url = f"{TELEGRAM_AUTHORIZATION_URL}?{urlencode({'client_id': client_id, 'redirect_uri': redirect_uri, 'response_type': 'code', 'scope': 'openid profile', 'state': state, 'nonce': nonce, 'code_challenge': challenge, 'code_challenge_method': 'S256'})}"
-    response = RedirectResponse(authorization_url, status_code=status.HTTP_302_FOUND)
+    # include origin so Telegram can correctly handle web flows
+    params = {
+        'client_id': client_id,
+        'redirect_uri': redirect_uri,
+        'response_type': 'code',
+        'scope': 'openid profile',
+        'state': state,
+        'nonce': nonce,
+        'code_challenge': challenge,
+        'code_challenge_method': 'S256',
+        'origin': web_app_origin,
+    }
+    authorization_url = f"{TELEGRAM_AUTHORIZATION_URL}?{urlencode(params)}"
+
+    # Try fetching authorization URL server-side to detect a tg:// redirect and convert to t.me web link
+    from app.web.auth import get_bot_username
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
+            resp = await client.get(authorization_url)
+        loc = resp.headers.get('location') or resp.headers.get('Location')
+        if loc and loc.startswith('tg://'):
+            # extract start token
+            import re
+
+            m = re.search(r'(?:startapp|start)=([^&]+)', loc)
+            token = m.group(1) if m else None
+            bot = await get_bot_username()
+            if bot and token:
+                web_link = f"https://t.me/{bot}?start={token}"
+                response = RedirectResponse(web_link, status_code=status.HTTP_302_FOUND)
+            else:
+                response = RedirectResponse(authorization_url, status_code=status.HTTP_302_FOUND)
+        else:
+            response = RedirectResponse(authorization_url, status_code=status.HTTP_302_FOUND)
+    except Exception:
+        response = RedirectResponse(authorization_url, status_code=status.HTTP_302_FOUND)
+
     response.set_cookie(key=LOGIN_STATE_COOKIE_NAME, value=state_cookie, max_age=600, httponly=True, secure=settings.WEB_SESSION_COOKIE_SECURE, samesite="lax", path="/api/web/auth/telegram")
     return response
 
@@ -83,6 +120,32 @@ async def telegram_login_callback(code: str, state: str, request: Request) -> Re
         path="/",
     )
     response.delete_cookie(key=LOGIN_STATE_COOKIE_NAME, path="/api/web/auth/telegram")
+    return response
+
+
+@router.post("/auth/telegram/widget")
+async def telegram_widget_login(request: Request) -> Response:
+    """Accepts Telegram Login Widget data posted from the client, verifies it and sets session cookie."""
+    from app.web.auth import verify_telegram_widget_data
+
+    payload = await request.json()
+    telegram_id = verify_telegram_widget_data(payload)
+    user = database.get_user(telegram_id)
+    if not user or not user.get("is_active", True):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User is not registered")
+    if not get_subscription_service().can_access_web_app(telegram_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Professional plan or higher required")
+
+    response = Response(status_code=status.HTTP_200_OK)
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=create_session_token(telegram_id),
+        max_age=settings.WEB_SESSION_MAX_AGE_SECONDS,
+        httponly=True,
+        secure=settings.WEB_SESSION_COOKIE_SECURE,
+        samesite="lax",
+        path="/",
+    )
     return response
 
 

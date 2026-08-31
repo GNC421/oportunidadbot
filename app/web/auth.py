@@ -24,6 +24,38 @@ TELEGRAM_TOKEN_URL = "https://oauth.telegram.org/token"
 TELEGRAM_JWKS_URL = "https://oauth.telegram.org/.well-known/jwks.json"
 TELEGRAM_ISSUER = "https://oauth.telegram.org"
 
+# simple cache for bot username
+_BOT_USERNAME_CACHE: dict[str, int] = {}
+
+
+async def get_bot_username() -> str | None:
+    """Return the bot username using the configured BOT_TOKEN (cached briefly)."""
+    from app.config import settings as _settings
+    import httpx
+
+    token = _settings.BOT_TOKEN
+    if not token:
+        return None
+    # cache for 60 seconds
+    cached = _BOT_USERNAME_CACHE.get("username")
+    ts = _BOT_USERNAME_CACHE.get("ts", 0)
+    if cached and (time.time() - ts) < 60:
+        return cached
+    url = f"https://api.telegram.org/bot{token}/getMe"
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        try:
+            r = await client.get(url)
+            r.raise_for_status()
+            j = r.json()
+            username = j.get("result", {}).get("username")
+            if isinstance(username, str) and username:
+                _BOT_USERNAME_CACHE["username"] = username
+                _BOT_USERNAME_CACHE["ts"] = int(time.time())
+                return username
+        except Exception:
+            return None
+    return None
+
 
 def _require_oidc_config() -> tuple[str, str, str, str]:
     values = (
@@ -154,3 +186,42 @@ def require_pro_web_user(request: Request) -> dict[str, Any]:
     if not get_subscription_service().can_access_web_app(user_id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Professional plan or higher required")
     return user
+
+
+def verify_telegram_widget_data(data: dict[str, Any]) -> int:
+    """Verify Telegram Login Widget data (legacy) and return telegram user id.
+
+    Procedure from Telegram docs: build data_check_string from sorted keys
+    (except 'hash'), compute SHA256 of bot token as secret_key, then HMAC-SHA256
+    of data_check_string and compare hex digest to provided hash.
+    """
+    token = settings.BOT_TOKEN
+    if not token:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Telegram bot token not configured")
+    required = ["id", "auth_date", "hash"]
+    if not all(k in data for k in required):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid telegram widget payload")
+    hash_value = str(data.get("hash"))
+    # prepare data_check_string
+    items = []
+    for k in sorted(k for k in data.keys() if k != "hash"):
+        v = data.get(k)
+        if v is None:
+            continue
+        items.append(f"{k}={v}")
+    data_check_string = "\n".join(items)
+    secret_key = hashlib.sha256(token.encode("utf-8")).digest()
+    computed = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(computed, hash_value):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid telegram signature")
+    # check timestamp freshness (allow 5 minutes)
+    try:
+        auth_date = int(data.get("auth_date"))
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid auth_date")
+    if int(time.time()) - auth_date > 300:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Stale telegram auth data")
+    telegram_id = int(data.get("id"))
+    if telegram_id <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid telegram id")
+    return telegram_id
