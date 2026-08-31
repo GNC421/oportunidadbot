@@ -6,6 +6,7 @@ import {
   Building2,
   CheckCircle2,
   CircleAlert,
+  CreditCard,
   ExternalLink,
   Loader2,
   LogOut,
@@ -32,7 +33,36 @@ type Alert = {
   source_url: string | null;
 };
 type Feed = { id: number; url: string; is_active: boolean; last_check: string | null };
-type View = "opportunities" | "settings";
+type SubscriptionPlan = {
+  identifier: string;
+  name: string;
+  price: string;
+  currency: string;
+  source_limit: number | null;
+  features: string[];
+};
+type Subscription = {
+  plan: string;
+  status: string;
+  current_period_end: string | null;
+  cancel_at_period_end: boolean;
+  source_limit: number | null;
+  sources_used: number;
+  remaining_sources: number | null;
+  has_stripe_customer: boolean;
+  plans: SubscriptionPlan[];
+};
+type View = "opportunities" | "settings" | "subscription";
+
+const STATUS_LABELS: Record<string, string> = {
+  active: "Activa",
+  trialing: "En prueba",
+  past_due: "Pago pendiente",
+  canceled: "Cancelada",
+  incomplete: "Incompleta",
+  incomplete_expired: "Incompleta expirada",
+  unpaid: "Impagada",
+};
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
 
@@ -58,6 +88,7 @@ export function PrivateWebApp() {
   const [user, setUser] = useState<CurrentUser | null>(null);
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [feeds, setFeeds] = useState<Feed[]>([]);
+  const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loginError, setLoginError] = useState<string | null>(null);
 
@@ -72,16 +103,18 @@ export function PrivateWebApp() {
       return;
     }
     const currentUser = (await meResponse.json()) as CurrentUser;
-    const [alertsResponse, feedsResponse] = await Promise.all([
+    const [alertsResponse, feedsResponse, subscriptionResponse] = await Promise.all([
       fetch(`${apiBaseUrl}/api/web/alerts`, { credentials: "include" }),
       fetch(`${apiBaseUrl}/api/web/feeds`, { credentials: "include" }),
+      fetch(`${apiBaseUrl}/api/web/subscription`, { credentials: "include" }),
     ]);
-    if (!alertsResponse.ok || !feedsResponse.ok) {
+    if (!alertsResponse.ok || !feedsResponse.ok || !subscriptionResponse.ok) {
       throw new Error("No se pudo cargar el espacio de trabajo.");
     }
     setUser(currentUser);
     setAlerts((await alertsResponse.json()) as Alert[]);
     setFeeds((await feedsResponse.json()) as Feed[]);
+    setSubscription((await subscriptionResponse.json()) as Subscription);
   }
 
   useEffect(() => {
@@ -96,6 +129,7 @@ export function PrivateWebApp() {
     setUser(null);
     setAlerts([]);
     setFeeds([]);
+    setSubscription(null);
     setView("opportunities");
   }
 
@@ -141,6 +175,34 @@ export function PrivateWebApp() {
     return null;
   }
 
+  async function startCheckout(plan: string): Promise<string | null> {
+    const response = await fetch(`${apiBaseUrl}/api/web/subscription/checkout`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ plan }),
+    });
+    if (!response.ok) {
+      return parseErrorDetail(response, "No se pudo iniciar el pago.");
+    }
+    const body = (await response.json()) as { url: string };
+    window.open(body.url, "_blank", "noopener,noreferrer");
+    return null;
+  }
+
+  async function openBillingPortal(): Promise<string | null> {
+    const response = await fetch(`${apiBaseUrl}/api/web/subscription/portal`, {
+      method: "POST",
+      credentials: "include",
+    });
+    if (!response.ok) {
+      return parseErrorDetail(response, "No se pudo abrir el portal de facturación.");
+    }
+    const body = (await response.json()) as { url: string };
+    window.open(body.url, "_blank", "noopener,noreferrer");
+    return null;
+  }
+
   if (isLoading) {
     return <main className="grid min-h-screen place-items-center text-sm text-[#5d6962]">Cargando panel...</main>;
   }
@@ -163,13 +225,12 @@ export function PrivateWebApp() {
           <div className="inline-flex w-fit border bg-white p-1" role="tablist" aria-label="Panel">
             <button role="tab" aria-selected={view === "opportunities"} onClick={() => setView("opportunities")} className={`flex h-9 items-center gap-2 px-3 text-sm ${view === "opportunities" ? "bg-[var(--accent)] text-white" : "text-[#516057]"}`}><BellRing size={16} />Oportunidades</button>
             <button role="tab" aria-selected={view === "settings"} onClick={() => setView("settings")} className={`flex h-9 items-center gap-2 px-3 text-sm ${view === "settings" ? "bg-[var(--accent)] text-white" : "text-[#516057]"}`}><Settings2 size={16} />Configuración</button>
+            <button role="tab" aria-selected={view === "subscription"} onClick={() => setView("subscription")} className={`flex h-9 items-center gap-2 px-3 text-sm ${view === "subscription" ? "bg-[var(--accent)] text-white" : "text-[#516057]"}`}><CreditCard size={16} />Suscripción</button>
           </div>
         </div>
-        {view === "opportunities" ? (
-          <Opportunities alerts={alerts} />
-        ) : (
-          <Configuration feeds={feeds} onAdd={addFeed} onToggle={toggleFeed} onDelete={deleteFeed} />
-        )}
+        {view === "opportunities" && <Opportunities alerts={alerts} />}
+        {view === "settings" && <Configuration feeds={feeds} onAdd={addFeed} onToggle={toggleFeed} onDelete={deleteFeed} />}
+        {view === "subscription" && <SubscriptionPanel subscription={subscription} onCheckout={startCheckout} onOpenPortal={openBillingPortal} />}
       </div>
     </main>
   );
@@ -432,6 +493,94 @@ function Configuration({
         <h2 className="mt-5 font-[family-name:var(--font-display)] text-xl font-semibold">Criterios de búsqueda</h2>
         <p className="mt-2 text-sm leading-6 text-[#526158]">La configuración avanzada se añadirá sobre este espacio sin cambiar tus fuentes ni tus alertas actuales.</p>
       </aside>
+    </section>
+  );
+}
+
+function SubscriptionPanel({
+  subscription,
+  onCheckout,
+  onOpenPortal,
+}: {
+  subscription: Subscription | null;
+  onCheckout: (plan: string) => Promise<string | null>;
+  onOpenPortal: () => Promise<string | null>;
+}) {
+  const [pendingPlan, setPendingPlan] = useState<string | null>(null);
+  const [isOpeningPortal, setIsOpeningPortal] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  if (!subscription) {
+    return <section className="pt-8"><div className="border border-dashed bg-white px-6 py-14 text-center text-sm text-[#657168]">No se pudo cargar tu suscripción.</div></section>;
+  }
+
+  async function handleCheckout(plan: string) {
+    setActionError(null);
+    setPendingPlan(plan);
+    const error = await onCheckout(plan);
+    if (error) setActionError(error);
+    setPendingPlan(null);
+  }
+
+  async function handleOpenPortal() {
+    setActionError(null);
+    setIsOpeningPortal(true);
+    const error = await onOpenPortal();
+    if (error) setActionError(error);
+    setIsOpeningPortal(false);
+  }
+
+  const remainingLabel = subscription.remaining_sources === null ? "Ilimitadas" : `${subscription.remaining_sources}`;
+  const limitLabel = subscription.source_limit === null ? "Ilimitadas" : `${subscription.source_limit}`;
+
+  return (
+    <section className="grid gap-8 pt-8 lg:grid-cols-[0.9fr_1.1fr]">
+      <div className="border bg-white p-6">
+        <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--accent)]">Plan actual</p>
+        <h2 className="mt-2 font-[family-name:var(--font-display)] text-2xl font-semibold capitalize">{subscription.plan}</h2>
+        <span className={`mt-3 inline-flex w-fit px-2 py-1 text-xs font-semibold ${subscription.status === "active" ? "bg-[var(--accent-soft)] text-[var(--accent-deep)]" : "bg-[#fff0df] text-[var(--amber)]"}`}>
+          {STATUS_LABELS[subscription.status] ?? subscription.status}
+        </span>
+        <dl className="mt-6 grid gap-4 text-sm">
+          <div className="flex justify-between border-b pb-3"><dt className="text-[#657168]">Fuentes usadas</dt><dd className="font-medium">{subscription.sources_used} / {limitLabel}</dd></div>
+          <div className="flex justify-between border-b pb-3"><dt className="text-[#657168]">Fuentes disponibles</dt><dd className="font-medium">{remainingLabel}</dd></div>
+          <div className="flex justify-between border-b pb-3"><dt className="text-[#657168]">Próxima renovación</dt><dd className="font-medium">{formatDate(subscription.current_period_end)}</dd></div>
+          {subscription.cancel_at_period_end && <p className="text-sm text-[var(--amber)]">Tu suscripción se cancelará al final del periodo actual.</p>}
+        </dl>
+        <button
+          onClick={() => void handleOpenPortal()}
+          disabled={!subscription.has_stripe_customer || isOpeningPortal}
+          className="mt-6 inline-flex h-10 w-full items-center justify-center gap-2 border bg-white px-4 text-sm font-semibold text-[#536158] hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:opacity-50"
+        >
+          {isOpeningPortal ? <Loader2 size={16} className="animate-spin" /> : <CreditCard size={16} />}
+          Gestionar en Stripe Portal
+        </button>
+        {!subscription.has_stripe_customer && <p className="mt-2 text-xs text-[#657168]">Aún no tienes un cliente de Stripe asociado. Contrata un plan para activarlo.</p>}
+        {actionError && <p className="mt-3 flex items-center gap-2 text-sm text-[#a43820]"><CircleAlert size={16} />{actionError}</p>}
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-3">
+        {subscription.plans.map((plan) => {
+          const isCurrent = plan.identifier === subscription.plan;
+          return (
+            <div key={plan.identifier} className={`flex flex-col border bg-white p-5 ${isCurrent ? "border-[var(--accent)]" : ""}`}>
+              <p className="font-[family-name:var(--font-display)] text-lg font-semibold">{plan.name}</p>
+              <p className="mt-1 text-2xl font-semibold">{plan.price} {plan.currency}<span className="text-sm font-normal text-[#657168]">/mes</span></p>
+              <ul className="mt-4 flex-1 space-y-2 text-sm text-[#58655d]">
+                {plan.features.map((feature) => <li key={feature}>• {feature}</li>)}
+              </ul>
+              <button
+                onClick={() => void handleCheckout(plan.identifier)}
+                disabled={isCurrent || pendingPlan === plan.identifier}
+                className="mt-5 inline-flex h-10 items-center justify-center gap-2 bg-[var(--accent)] px-4 text-sm font-semibold text-white disabled:opacity-50"
+              >
+                {pendingPlan === plan.identifier ? <Loader2 size={16} className="animate-spin" /> : null}
+                {isCurrent ? "Plan actual" : "Contratar"}
+              </button>
+            </div>
+          );
+        })}
+      </div>
     </section>
   );
 }

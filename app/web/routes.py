@@ -10,8 +10,10 @@ from urllib.parse import urlencode, urlparse
 from app import database
 from app.config import settings
 from app.services import feed_parser
+from app.services.stripe_service import StripeIntegrationError, get_stripe_service
 from app.services.subscription_service import get_subscription_service
 from app.sources import SourceFactory
+from app.subscriptions import Plan, get_subscription_catalog
 
 from .auth import (
     LOGIN_STATE_COOKIE_NAME,
@@ -54,6 +56,39 @@ class CreateFeedRequest(BaseModel):
 
 class UpdateFeedStatusRequest(BaseModel):
     is_active: bool
+
+
+class SubscriptionPlanResponse(BaseModel):
+    identifier: str
+    name: str
+    price: str
+    currency: str
+    source_limit: int | None
+    features: list[str]
+
+
+class SubscriptionResponse(BaseModel):
+    plan: str
+    status: str
+    current_period_end: str | None
+    cancel_at_period_end: bool
+    source_limit: int | None
+    sources_used: int
+    remaining_sources: int | None
+    has_stripe_customer: bool
+    plans: list[SubscriptionPlanResponse]
+
+
+class CheckoutRequest(BaseModel):
+    plan: str
+
+
+class CheckoutResponse(BaseModel):
+    url: str
+
+
+class PortalResponse(BaseModel):
+    url: str
 
 
 def _find_user_feed(user_id: int, feed_id: int) -> Optional[dict[str, Any]]:
@@ -282,3 +317,69 @@ async def delete_feed(feed_id: int, user: WebUser) -> Response:
 
     database.delete_feed(user_id, feed_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/subscription", response_model=SubscriptionResponse)
+async def get_subscription(user: WebUser) -> SubscriptionResponse:
+    user_id = int(user["id"])
+    service = get_subscription_service()
+    subscription = service.get_current_subscription(user_id)
+    plan_definition = subscription.plan_definition
+
+    return SubscriptionResponse(
+        plan=subscription.plan.value,
+        status=subscription.status.value,
+        current_period_end=subscription.current_period_end.isoformat() if subscription.current_period_end else None,
+        cancel_at_period_end=subscription.cancel_at_period_end,
+        source_limit=plan_definition.source_limit,
+        sources_used=database.user_feed_count(user_id),
+        remaining_sources=service.get_remaining_sources(user_id),
+        has_stripe_customer=bool(subscription.stripe_customer_id),
+        plans=[
+            SubscriptionPlanResponse(
+                identifier=plan.identifier,
+                name=plan.name,
+                price=f"{plan.price:.2f}",
+                currency=plan.currency,
+                source_limit=plan.source_limit,
+                features=list(plan.features),
+            )
+            for plan in get_subscription_catalog().list_plans()
+        ],
+    )
+
+
+@router.post("/subscription/checkout", response_model=CheckoutResponse)
+async def create_subscription_checkout(payload: CheckoutRequest, user: WebUser) -> CheckoutResponse:
+    user_id = int(user["id"])
+    try:
+        plan = Plan(payload.plan)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="El plan seleccionado no es valido")
+
+    subscription = get_subscription_service().get_current_subscription(user_id)
+    try:
+        session = get_stripe_service().create_checkout_session(
+            user_id=user_id,
+            plan=plan,
+            customer_id=subscription.stripe_customer_id,
+        )
+    except StripeIntegrationError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
+
+    return CheckoutResponse(url=session.url)
+
+
+@router.post("/subscription/portal", response_model=PortalResponse)
+async def create_subscription_portal(user: WebUser) -> PortalResponse:
+    user_id = int(user["id"])
+    subscription = get_subscription_service().get_current_subscription(user_id)
+    if not subscription.stripe_customer_id:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Todavia no tienes un cliente de Stripe asociado a tu cuenta")
+
+    try:
+        session = get_stripe_service().create_customer_portal_session(subscription.stripe_customer_id)
+    except StripeIntegrationError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
+
+    return PortalResponse(url=session.url)
