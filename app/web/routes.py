@@ -73,6 +73,12 @@ def _to_feed_response(feed: dict[str, Any]) -> FeedResponse:
     )
 
 
+def _session_cookie_samesite() -> str:
+    # Webapp and API run on different origins in production; SameSite=None (requires Secure)
+    # is needed so the session cookie is sent on cross-site fetch() calls from the webapp.
+    return "none" if settings.WEB_SESSION_COOKIE_SECURE else "lax"
+
+
 @router.get("/auth/telegram/start")
 async def start_telegram_login() -> RedirectResponse:
     from app.web.auth import _require_oidc_config
@@ -143,7 +149,7 @@ async def telegram_login_callback(code: str, state: str, request: Request) -> Re
         max_age=settings.WEB_SESSION_MAX_AGE_SECONDS,
         httponly=True,
         secure=settings.WEB_SESSION_COOKIE_SECURE,
-        samesite="lax",
+        samesite=_session_cookie_samesite(),
         path="/",
     )
     response.delete_cookie(key=LOGIN_STATE_COOKIE_NAME, path="/api/web/auth/telegram")
@@ -170,7 +176,7 @@ async def telegram_widget_login(request: Request) -> Response:
         max_age=settings.WEB_SESSION_MAX_AGE_SECONDS,
         httponly=True,
         secure=settings.WEB_SESSION_COOKIE_SECURE,
-        samesite="lax",
+        samesite=_session_cookie_samesite(),
         path="/",
     )
     return response
