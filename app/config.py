@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     WEB_SESSION_MAX_AGE_SECONDS: int = Field(28800, description="Duración máxima de la sesión web en segundos")
     WEB_SESSION_COOKIE_SECURE: bool = Field(False, description="Enviar la cookie de sesión web solo por HTTPS")
     WEB_APP_ORIGIN: Optional[str] = Field(None, description="Origen permitido de la aplicación web privada")
+    TELEGRAM_LOGIN_CLIENT_ID: Optional[str] = Field(None, description="Client ID de Telegram Login OIDC")
+    TELEGRAM_LOGIN_CLIENT_SECRET: Optional[str] = Field(None, description="Client Secret de Telegram Login OIDC")
+    TELEGRAM_LOGIN_REDIRECT_URI: Optional[str] = Field(None, description="Callback OIDC registrado en Telegram Login")
 
     # Stripe (future use)
     STRIPE_SECRET_KEY: Optional[str] = Field(None, description="Secret key de Stripe")

@@ -29,6 +29,7 @@ APScheduler==3.11.0
 # HTTP
 httpx==0.28.1
 stripe==10.9.0
+PyJWT[crypto]==2.10.1
 
 # IA
 openai==1.97.1

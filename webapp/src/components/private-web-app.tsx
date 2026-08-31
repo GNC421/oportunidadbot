@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   BellRing,
   Building2,
@@ -8,21 +8,12 @@ import {
   CircleAlert,
   ExternalLink,
   LogOut,
+  MessageCircle,
   Radio,
   Settings2,
   ShieldCheck,
   SlidersHorizontal,
 } from "lucide-react";
-
-type TelegramLoginData = {
-  id: number;
-  auth_date: number;
-  hash: string;
-  first_name?: string;
-  last_name?: string;
-  username?: string;
-  photo_url?: string;
-};
 
 type CurrentUser = { id: number; username: string; plan: string };
 type Alert = {
@@ -38,14 +29,7 @@ type Alert = {
 type Feed = { id: number; url: string; is_active: boolean; last_check: string | null };
 type View = "opportunities" | "settings";
 
-declare global {
-  interface Window {
-    onOportunidadBotTelegramLogin?: (user: TelegramLoginData) => void;
-  }
-}
-
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
-const telegramBotUsername = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME;
 
 function formatDate(value: string | null) {
   if (!value) return "Fecha no disponible";
@@ -56,14 +40,12 @@ function formatDate(value: string | null) {
 }
 
 export function PrivateWebApp() {
-  const widgetContainer = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<View>("opportunities");
   const [user, setUser] = useState<CurrentUser | null>(null);
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [feeds, setFeeds] = useState<Feed[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loginError, setLoginError] = useState<string | null>(null);
-  const [telegramWidgetStatus, setTelegramWidgetStatus] = useState<"loading" | "ready" | "error">("loading");
 
   async function loadWorkspace() {
     const meResponse = await fetch(`${apiBaseUrl}/api/web/me`, { credentials: "include" });
@@ -91,50 +73,6 @@ export function PrivateWebApp() {
       .finally(() => setIsLoading(false));
   }, []);
 
-  useEffect(() => {
-    if (user || !telegramBotUsername || !widgetContainer.current) return;
-    window.onOportunidadBotTelegramLogin = (telegramUser) => {
-      setLoginError(null);
-      setIsLoading(true);
-      void fetch(`${apiBaseUrl}/api/web/auth/telegram`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(telegramUser),
-      })
-        .then(async (response) => {
-          if (!response.ok) {
-            const body = (await response.json().catch(() => null)) as { detail?: string } | null;
-            throw new Error(body?.detail ?? "No se pudo iniciar sesión.");
-          }
-          await loadWorkspace();
-        })
-        .catch((error: unknown) => setLoginError(error instanceof Error ? error.message : "No se pudo iniciar sesión."))
-        .finally(() => setIsLoading(false));
-    };
-
-    const script = document.createElement("script");
-    script.src = "https://telegram.org/js/telegram-widget.js?22";
-    script.async = true;
-    script.setAttribute("data-telegram-login", telegramBotUsername);
-    script.setAttribute("data-size", "large");
-    script.setAttribute("data-radius", "6");
-    script.setAttribute("data-request-access", "write");
-    script.setAttribute("data-userpic", "false");
-    script.setAttribute("data-onauth", "onOportunidadBotTelegramLogin(user)");
-    script.onload = () => {
-      window.setTimeout(() => {
-        setTelegramWidgetStatus(widgetContainer.current?.querySelector("iframe") ? "ready" : "error");
-      }, 250);
-    };
-    script.onerror = () => setTelegramWidgetStatus("error");
-    widgetContainer.current.replaceChildren();
-    widgetContainer.current.appendChild(script);
-    return () => {
-      delete window.onOportunidadBotTelegramLogin;
-    };
-  }, [user]);
-
   async function logout() {
     await fetch(`${apiBaseUrl}/api/web/auth/logout`, { method: "POST", credentials: "include" });
     setUser(null);
@@ -148,7 +86,7 @@ export function PrivateWebApp() {
   }
 
   if (!user) {
-    return <LoginScreen error={loginError} widgetContainer={widgetContainer} widgetStatus={telegramWidgetStatus} />;
+    return <LoginScreen error={loginError} />;
   }
 
   return (
@@ -177,9 +115,8 @@ function Brand() {
   return <div className="grid size-9 place-items-center bg-[var(--accent)] text-white"><Building2 size={18} /></div>;
 }
 
-function LoginScreen({ error, widgetContainer, widgetStatus }: { error: string | null; widgetContainer: React.RefObject<HTMLDivElement | null>; widgetStatus: "loading" | "ready" | "error" }) {
-  const widgetUnavailable = telegramBotUsername && widgetStatus === "error";
-  return <main className="relative grid min-h-screen overflow-hidden px-5 py-8 sm:px-10"><div className="absolute -left-32 top-0 h-72 w-72 rounded-full bg-[#dcebd8] blur-3xl" /><div className="absolute bottom-0 right-0 h-80 w-80 rounded-full bg-[#f3d8b6] blur-3xl" /><section className="relative m-auto w-full max-w-md border bg-[var(--surface)] p-7 shadow-[0_24px_80px_-40px_rgba(23,34,31,0.45)] sm:p-10"><div className="mb-10 flex items-center gap-3"><Brand /><span className="font-[family-name:var(--font-display)] text-lg font-semibold">OportunidadBot</span></div><p className="mb-3 text-xs font-bold uppercase tracking-[0.14em] text-[var(--accent)]">Acceso privado</p><h1 className="font-[family-name:var(--font-display)] text-3xl font-semibold leading-tight">Tus oportunidades, en un solo lugar.</h1><p className="mt-4 text-sm leading-6 text-[#5d6962]">Accede con la cuenta de Telegram vinculada a tu suscripción Professional o Enterprise.</p><div className="mt-8 min-h-10" ref={widgetContainer}>{telegramBotUsername && widgetStatus === "loading" && <span className="inline-flex h-10 items-center border bg-[#edf4ef] px-4 text-sm font-medium text-[var(--accent-deep)]">Cargando acceso con Telegram...</span>}</div>{!telegramBotUsername && <p className="mt-4 text-sm text-[var(--amber)]">Falta configurar NEXT_PUBLIC_TELEGRAM_BOT_USERNAME.</p>}{widgetUnavailable && <p className="mt-4 flex gap-2 text-sm leading-5 text-[#a43820]"><CircleAlert className="mt-0.5 shrink-0" size={18} />Telegram no pudo mostrar el botón. Autoriza este dominio en BotFather mediante /setdomain y recarga la página.</p>}{error && <p className="mt-4 flex gap-2 text-sm text-[#a43820]"><CircleAlert size={18} />{error}</p>}<div className="mt-10 flex gap-3 border-t pt-5 text-xs leading-5 text-[#6c766f]"><ShieldCheck className="mt-0.5 shrink-0 text-[var(--accent)]" size={16} />Tu identidad se verifica directamente con Telegram.</div></section></main>;
+function LoginScreen({ error }: { error: string | null }) {
+  return <main className="relative grid min-h-screen overflow-hidden px-5 py-8 sm:px-10"><div className="absolute -left-32 top-0 h-72 w-72 rounded-full bg-[#dcebd8] blur-3xl" /><div className="absolute bottom-0 right-0 h-80 w-80 rounded-full bg-[#f3d8b6] blur-3xl" /><section className="relative m-auto w-full max-w-md border bg-[var(--surface)] p-7 shadow-[0_24px_80px_-40px_rgba(23,34,31,0.45)] sm:p-10"><div className="mb-10 flex items-center gap-3"><Brand /><span className="font-[family-name:var(--font-display)] text-lg font-semibold">OportunidadBot</span></div><p className="mb-3 text-xs font-bold uppercase tracking-[0.14em] text-[var(--accent)]">Acceso privado</p><h1 className="font-[family-name:var(--font-display)] text-3xl font-semibold leading-tight">Tus oportunidades, en un solo lugar.</h1><p className="mt-4 text-sm leading-6 text-[#5d6962]">Accede con la cuenta de Telegram vinculada a tu suscripción Professional o Enterprise.</p><a href={`${apiBaseUrl}/api/web/auth/telegram/start`} className="mt-8 inline-flex h-11 w-full items-center justify-center gap-2 bg-[#229ed9] px-4 text-sm font-semibold text-white transition hover:bg-[#168ac2]"><MessageCircle size={19} />Continuar con Telegram</a>{error && <p className="mt-4 flex gap-2 text-sm text-[#a43820]"><CircleAlert size={18} />{error}</p>}<div className="mt-10 flex gap-3 border-t pt-5 text-xs leading-5 text-[#6c766f]"><ShieldCheck className="mt-0.5 shrink-0 text-[var(--accent)]" size={16} />Tu identidad se verifica directamente con Telegram.</div></section></main>;
 }
 
 function Opportunities({ alerts }: { alerts: Alert[] }) {
