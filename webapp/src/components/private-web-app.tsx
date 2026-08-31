@@ -29,7 +29,7 @@ type Alert = {
 type Feed = { id: number; url: string; is_active: boolean; last_check: string | null };
 type View = "opportunities" | "settings";
 
-const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
 
 function formatDate(value: string | null) {
   if (!value) return "Fecha no disponible";
@@ -48,6 +48,10 @@ export function PrivateWebApp() {
   const [loginError, setLoginError] = useState<string | null>(null);
 
   async function loadWorkspace() {
+    if (!apiBaseUrl) {
+      setLoginError("La URL de la API no está configurada en este despliegue.");
+      return;
+    }
     const meResponse = await fetch(`${apiBaseUrl}/api/web/me`, { credentials: "include" });
     if (!meResponse.ok) {
       setUser(null);
@@ -86,7 +90,7 @@ export function PrivateWebApp() {
   }
 
   if (!user) {
-    return <LoginScreen error={loginError} />;
+    return <LoginScreen error={loginError} apiBaseUrl={apiBaseUrl} />;
   }
 
   return (
@@ -115,8 +119,8 @@ function Brand() {
   return <div className="grid size-9 place-items-center bg-[var(--accent)] text-white"><Building2 size={18} /></div>;
 }
 
-function LoginScreen({ error }: { error: string | null }) {
-  return <main className="relative grid min-h-screen overflow-hidden px-5 py-8 sm:px-10"><div className="absolute -left-32 top-0 h-72 w-72 rounded-full bg-[#dcebd8] blur-3xl" /><div className="absolute bottom-0 right-0 h-80 w-80 rounded-full bg-[#f3d8b6] blur-3xl" /><section className="relative m-auto w-full max-w-md border bg-[var(--surface)] p-7 shadow-[0_24px_80px_-40px_rgba(23,34,31,0.45)] sm:p-10"><div className="mb-10 flex items-center gap-3"><Brand /><span className="font-[family-name:var(--font-display)] text-lg font-semibold">OportunidadBot</span></div><p className="mb-3 text-xs font-bold uppercase tracking-[0.14em] text-[var(--accent)]">Acceso privado</p><h1 className="font-[family-name:var(--font-display)] text-3xl font-semibold leading-tight">Tus oportunidades, en un solo lugar.</h1><p className="mt-4 text-sm leading-6 text-[#5d6962]">Accede con la cuenta de Telegram vinculada a tu suscripción Professional o Enterprise.</p><a href={`${apiBaseUrl}/api/web/auth/telegram/start`} className="mt-8 inline-flex h-11 w-full items-center justify-center gap-2 bg-[#229ed9] px-4 text-sm font-semibold text-white transition hover:bg-[#168ac2]"><MessageCircle size={19} />Continuar con Telegram</a>{error && <p className="mt-4 flex gap-2 text-sm text-[#a43820]"><CircleAlert size={18} />{error}</p>}<div className="mt-10 flex gap-3 border-t pt-5 text-xs leading-5 text-[#6c766f]"><ShieldCheck className="mt-0.5 shrink-0 text-[var(--accent)]" size={16} />Tu identidad se verifica directamente con Telegram.</div></section></main>;
+function LoginScreen({ error, apiBaseUrl }: { error: string | null; apiBaseUrl?: string }) {
+  return <main className="relative grid min-h-screen overflow-hidden px-5 py-8 sm:px-10"><div className="absolute -left-32 top-0 h-72 w-72 rounded-full bg-[#dcebd8] blur-3xl" /><div className="absolute bottom-0 right-0 h-80 w-80 rounded-full bg-[#f3d8b6] blur-3xl" /><section className="relative m-auto w-full max-w-md border bg-[var(--surface)] p-7 shadow-[0_24px_80px_-40px_rgba(23,34,31,0.45)] sm:p-10"><div className="mb-10 flex items-center gap-3"><Brand /><span className="font-[family-name:var(--font-display)] text-lg font-semibold">OportunidadBot</span></div><p className="mb-3 text-xs font-bold uppercase tracking-[0.14em] text-[var(--accent)]">Acceso privado</p><h1 className="font-[family-name:var(--font-display)] text-3xl font-semibold leading-tight">Tus oportunidades, en un solo lugar.</h1><p className="mt-4 text-sm leading-6 text-[#5d6962]">Accede con la cuenta de Telegram vinculada a tu suscripción Professional o Enterprise.</p>{apiBaseUrl ? <a href={`${apiBaseUrl}/api/web/auth/telegram/start`} className="mt-8 inline-flex h-11 w-full items-center justify-center gap-2 bg-[#229ed9] px-4 text-sm font-semibold text-white transition hover:bg-[#168ac2]"><MessageCircle size={19} />Continuar con Telegram</a> : <span className="mt-8 inline-flex h-11 w-full items-center justify-center gap-2 bg-[#a7b1aa] px-4 text-sm font-semibold text-white"><MessageCircle size={19} />Continuar con Telegram</span>}{error && <p className="mt-4 flex gap-2 text-sm text-[#a43820]"><CircleAlert size={18} />{error}</p>}<div className="mt-10 flex gap-3 border-t pt-5 text-xs leading-5 text-[#6c766f]"><ShieldCheck className="mt-0.5 shrink-0 text-[var(--accent)]" size={16} />Tu identidad se verifica directamente con Telegram.</div></section></main>;
 }
 
 function Opportunities({ alerts }: { alerts: Alert[] }) {
