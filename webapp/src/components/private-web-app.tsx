@@ -131,18 +131,31 @@ function LoginScreen({ error, apiBaseUrl }: { error: string | null; apiBaseUrl?:
       const loc = resp.headers.get("location") || resp.headers.get("Location");
       if (loc) {
         if (loc.startsWith("tg://")) {
-          // Try native app, then fallback to t.me link if no handler
-          window.location.href = loc;
-          const bot = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME;
-          const startMatch = loc.match(/[?&](?:startapp|start)=([^&]+)/);
-          const startToken = startMatch ? decodeURIComponent(startMatch[1]) : null;
-          setTimeout(() => {
-            if (bot && startToken) {
-              window.location.href = `https://t.me/${bot}?start=${encodeURIComponent(startToken)}`;
-            } else {
-              window.open("https://web.telegram.org/", "_blank");
-            }
-          }, 1200);
+          // Try native app using hidden iframe, then fallback to t.me link or web.telegram.org
+          try {
+            const iframe = document.createElement("iframe");
+            iframe.style.display = "none";
+            iframe.src = loc;
+            document.body.appendChild(iframe);
+            const bot = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME;
+            const startMatch = loc.match(/[?&](?:startapp|start)=([^&]+)/);
+            const startToken = startMatch ? decodeURIComponent(startMatch[1]) : null;
+            setTimeout(() => {
+              try {
+                if (document.body.contains(iframe)) document.body.removeChild(iframe);
+              } catch (e) {
+                /* ignore */
+              }
+              if (bot && startToken) {
+                window.location.href = `https://t.me/${bot}?start=${encodeURIComponent(startToken)}`;
+              } else {
+                window.open("https://web.telegram.org/", "_blank");
+              }
+            }, 1200);
+          } catch (e) {
+            // If iframe approach fails, fallback to direct navigation
+            window.location.href = loc;
+          }
         } else {
           window.location.href = loc;
         }
