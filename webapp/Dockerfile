@@ -5,9 +5,11 @@ RUN npm ci
 
 FROM node:22-alpine AS builder
 WORKDIR /webapp
+ARG NEXT_PUBLIC_API_BASE_URL
+ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
 COPY --from=deps /webapp/node_modules ./node_modules
 COPY . .
-RUN npm run build
+RUN echo "[webapp build] NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL" && npm run build
 
 FROM node:22-alpine AS runner
 WORKDIR /webapp
