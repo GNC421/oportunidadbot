@@ -118,7 +118,6 @@ pip-delete-this-directory.txt
 
 # Railway
 railway-deployment-*.json
-.railway/
 
 # Docker
 *.dockerignore
