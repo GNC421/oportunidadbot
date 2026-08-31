@@ -7,12 +7,17 @@ import {
   CheckCircle2,
   CircleAlert,
   ExternalLink,
+  Loader2,
   LogOut,
   MessageCircle,
+  Pause,
+  Play,
+  Plus,
   Radio,
   Settings2,
   ShieldCheck,
   SlidersHorizontal,
+  Trash2,
 } from "lucide-react";
 
 type CurrentUser = { id: number; username: string; plan: string };
@@ -37,6 +42,15 @@ function formatDate(value: string | null) {
   return Number.isNaN(date.getTime())
     ? "Fecha no disponible"
     : new Intl.DateTimeFormat("es-ES", { dateStyle: "medium", timeStyle: "short" }).format(date);
+}
+
+async function parseErrorDetail(response: Response, fallback: string): Promise<string> {
+  try {
+    const body = (await response.json()) as { detail?: string };
+    return body?.detail ?? fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 export function PrivateWebApp() {
@@ -85,6 +99,48 @@ export function PrivateWebApp() {
     setView("opportunities");
   }
 
+  async function addFeed(url: string): Promise<string | null> {
+    const response = await fetch(`${apiBaseUrl}/api/web/feeds`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+    if (!response.ok) {
+      return parseErrorDetail(response, "No se pudo añadir la fuente.");
+    }
+    const created = (await response.json()) as Feed;
+    setFeeds((current) => [...current, created]);
+    return null;
+  }
+
+  async function toggleFeed(feed: Feed): Promise<string | null> {
+    const response = await fetch(`${apiBaseUrl}/api/web/feeds/${feed.id}`, {
+      method: "PATCH",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ is_active: !feed.is_active }),
+    });
+    if (!response.ok) {
+      return parseErrorDetail(response, "No se pudo actualizar la fuente.");
+    }
+    const updated = (await response.json()) as Feed;
+    setFeeds((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+    return null;
+  }
+
+  async function deleteFeed(feedId: number): Promise<string | null> {
+    const response = await fetch(`${apiBaseUrl}/api/web/feeds/${feedId}`, {
+      method: "DELETE",
+      credentials: "include",
+    });
+    if (!response.ok) {
+      return parseErrorDetail(response, "No se pudo eliminar la fuente.");
+    }
+    setFeeds((current) => current.filter((item) => item.id !== feedId));
+    return null;
+  }
+
   if (isLoading) {
     return <main className="grid min-h-screen place-items-center text-sm text-[#5d6962]">Cargando panel...</main>;
   }
@@ -109,11 +165,16 @@ export function PrivateWebApp() {
             <button role="tab" aria-selected={view === "settings"} onClick={() => setView("settings")} className={`flex h-9 items-center gap-2 px-3 text-sm ${view === "settings" ? "bg-[var(--accent)] text-white" : "text-[#516057]"}`}><Settings2 size={16} />Configuración</button>
           </div>
         </div>
-        {view === "opportunities" ? <Opportunities alerts={alerts} /> : <Configuration feeds={feeds} />}
+        {view === "opportunities" ? (
+          <Opportunities alerts={alerts} />
+        ) : (
+          <Configuration feeds={feeds} onAdd={addFeed} onToggle={toggleFeed} onDelete={deleteFeed} />
+        )}
       </div>
     </main>
   );
 }
+
 
 function Brand() {
   return <div className="grid size-9 place-items-center bg-[var(--accent)] text-white"><Building2 size={18} /></div>;
@@ -234,6 +295,143 @@ function Opportunities({ alerts }: { alerts: Alert[] }) {
   return <section className="pt-8"><div className="mb-6 flex items-center justify-between"><div><h2 className="font-[family-name:var(--font-display)] text-xl font-semibold">Alertas recientes</h2><p className="mt-1 text-sm text-[#657168]">{alerts.length} oportunidades detectadas</p></div><SlidersHorizontal className="text-[#6d7b71]" size={20} /></div><div className="grid gap-4">{alerts.map((alert) => <article key={alert.id} className="border bg-white p-5 transition hover:border-[#98b7a8] sm:p-6"><div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between"><div><div className="flex flex-wrap items-center gap-2 text-xs font-medium text-[#657168]"><Radio size={14} className="text-[var(--accent)]" /><span>{alert.source_url ?? "Fuente no disponible"}</span><span className="h-1 w-1 bg-[#9da69f]" /><span>{formatDate(alert.detected_at)}</span></div><h3 className="mt-3 font-[family-name:var(--font-display)] text-xl font-semibold leading-7">{alert.title}</h3></div><span className={`inline-flex w-fit items-center gap-1.5 px-2.5 py-1 text-xs font-semibold ${alert.sent_at ? "bg-[var(--accent-soft)] text-[var(--accent-deep)]" : "bg-[#fff0df] text-[var(--amber)]"}`}>{alert.sent_at ? <CheckCircle2 size={14} /> : <CircleAlert size={14} />}{alert.sent_at ? "Enviada" : "Pendiente"}</span></div>{alert.content && <p className="mt-4 max-w-3xl whitespace-pre-wrap text-sm leading-6 text-[#58655d]">{alert.content}</p>}<div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t pt-4 text-sm"><span className="text-[#657168]">{alert.author ? `Publicado por ${alert.author}` : "Autor no disponible"}</span>{alert.url && <a href={alert.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 font-semibold text-[var(--accent)] hover:text-[var(--accent-deep)]">Ver publicación <ExternalLink size={15} /></a>}</div></article>)}</div></section>;
 }
 
-function Configuration({ feeds }: { feeds: Feed[] }) {
-  return <section className="grid gap-8 pt-8 lg:grid-cols-[1.4fr_0.6fr]"><div><h2 className="font-[family-name:var(--font-display)] text-xl font-semibold">Fuentes activas</h2><p className="mt-1 text-sm text-[#657168]">Estas fuentes determinan dónde busca OportunidadBot.</p><div className="mt-5 divide-y border bg-white">{feeds.length === 0 ? <div className="px-5 py-10 text-center text-sm text-[#657168]">No hay fuentes configuradas.</div> : feeds.map((feed) => <div key={feed.id} className="flex items-center justify-between gap-4 px-5 py-4"><div className="min-w-0"><p className="truncate text-sm font-medium">{feed.url}</p><p className="mt-1 text-xs text-[#657168]">{feed.last_check ? `Última revisión: ${formatDate(feed.last_check)}` : "Aún sin revisiones"}</p></div><span className={`shrink-0 px-2 py-1 text-xs font-semibold ${feed.is_active ? "bg-[var(--accent-soft)] text-[var(--accent-deep)]" : "bg-[#edf0ec] text-[#617066]"}`}>{feed.is_active ? "Activa" : "Pausada"}</span></div>)}</div></div><aside className="border bg-[#e4efe7] p-6"><SlidersHorizontal className="text-[var(--accent)]" size={22} /><h2 className="mt-5 font-[family-name:var(--font-display)] text-xl font-semibold">Criterios de búsqueda</h2><p className="mt-2 text-sm leading-6 text-[#526158]">La configuración avanzada se añadirá sobre este espacio sin cambiar tus fuentes ni tus alertas actuales.</p></aside></section>;
+function Configuration({
+  feeds,
+  onAdd,
+  onToggle,
+  onDelete,
+}: {
+  feeds: Feed[];
+  onAdd: (url: string) => Promise<string | null>;
+  onToggle: (feed: Feed) => Promise<string | null>;
+  onDelete: (feedId: number) => Promise<string | null>;
+}) {
+  const [newUrl, setNewUrl] = useState("");
+  const [isAdding, setIsAdding] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
+  const [pendingActionId, setPendingActionId] = useState<number | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+
+  async function handleAddSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!newUrl.trim() || isAdding) return;
+    setIsAdding(true);
+    setAddError(null);
+    const error = await onAdd(newUrl.trim());
+    if (error) {
+      setAddError(error);
+    } else {
+      setNewUrl("");
+    }
+    setIsAdding(false);
+  }
+
+  async function handleToggle(feed: Feed) {
+    setActionError(null);
+    setPendingActionId(feed.id);
+    const error = await onToggle(feed);
+    if (error) setActionError(error);
+    setPendingActionId(null);
+  }
+
+  async function handleConfirmDelete(feedId: number) {
+    setActionError(null);
+    setPendingActionId(feedId);
+    const error = await onDelete(feedId);
+    if (error) setActionError(error);
+    setPendingActionId(null);
+    setConfirmDeleteId(null);
+  }
+
+  return (
+    <section className="grid gap-8 pt-8 lg:grid-cols-[1.4fr_0.6fr]">
+      <div>
+        <h2 className="font-[family-name:var(--font-display)] text-xl font-semibold">Fuentes activas</h2>
+        <p className="mt-1 text-sm text-[#657168]">Estas fuentes determinan dónde busca OportunidadBot.</p>
+
+        <form onSubmit={handleAddSubmit} className="mt-5 flex flex-col gap-3 border bg-white p-4 sm:flex-row sm:items-center">
+          <input
+            type="text"
+            value={newUrl}
+            onChange={(event) => setNewUrl(event.target.value)}
+            placeholder="https://reddit.com/r/murcia"
+            aria-label="URL de la nueva fuente"
+            className="h-10 flex-1 border px-3 text-sm outline-none focus:border-[var(--accent)]"
+          />
+          <button
+            type="submit"
+            disabled={isAdding || !newUrl.trim()}
+            className="inline-flex h-10 items-center justify-center gap-2 bg-[var(--accent)] px-4 text-sm font-semibold text-white disabled:opacity-50"
+          >
+            {isAdding ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
+            Añadir fuente
+          </button>
+        </form>
+        {addError && <p className="mt-2 flex items-center gap-2 text-sm text-[#a43820]"><CircleAlert size={16} />{addError}</p>}
+        {actionError && <p className="mt-2 flex items-center gap-2 text-sm text-[#a43820]"><CircleAlert size={16} />{actionError}</p>}
+
+        <div className="mt-5 divide-y border bg-white">
+          {feeds.length === 0 ? (
+            <div className="px-5 py-10 text-center text-sm text-[#657168]">No hay fuentes configuradas.</div>
+          ) : (
+            feeds.map((feed) => (
+              <div key={feed.id} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">{feed.url}</p>
+                  <p className="mt-1 text-xs text-[#657168]">{feed.last_check ? `Última revisión: ${formatDate(feed.last_check)}` : "Aún sin revisiones"}</p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <span className={`px-2 py-1 text-xs font-semibold ${feed.is_active ? "bg-[var(--accent-soft)] text-[var(--accent-deep)]" : "bg-[#edf0ec] text-[#617066]"}`}>
+                    {feed.is_active ? "Activa" : "Pausada"}
+                  </span>
+                  {confirmDeleteId === feed.id ? (
+                    <>
+                      <span className="text-xs text-[#657168]">¿Eliminar?</span>
+                      <button
+                        onClick={() => void handleConfirmDelete(feed.id)}
+                        disabled={pendingActionId === feed.id}
+                        className="h-8 border bg-[#a43820] px-3 text-xs font-semibold text-white disabled:opacity-50"
+                      >
+                        Confirmar
+                      </button>
+                      <button onClick={() => setConfirmDeleteId(null)} className="h-8 border bg-white px-3 text-xs font-semibold text-[#536158]">
+                        Cancelar
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        title={feed.is_active ? "Pausar fuente" : "Reanudar fuente"}
+                        aria-label={feed.is_active ? "Pausar fuente" : "Reanudar fuente"}
+                        onClick={() => void handleToggle(feed)}
+                        disabled={pendingActionId === feed.id}
+                        className="grid size-8 place-items-center border bg-white text-[#536158] hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:opacity-50"
+                      >
+                        {pendingActionId === feed.id ? <Loader2 size={15} className="animate-spin" /> : feed.is_active ? <Pause size={15} /> : <Play size={15} />}
+                      </button>
+                      <button
+                        title="Eliminar fuente"
+                        aria-label="Eliminar fuente"
+                        onClick={() => setConfirmDeleteId(feed.id)}
+                        disabled={pendingActionId === feed.id}
+                        className="grid size-8 place-items-center border bg-white text-[#536158] hover:border-[#a43820] hover:text-[#a43820] disabled:opacity-50"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+      <aside className="border bg-[#e4efe7] p-6">
+        <SlidersHorizontal className="text-[var(--accent)]" size={22} />
+        <h2 className="mt-5 font-[family-name:var(--font-display)] text-xl font-semibold">Criterios de búsqueda</h2>
+        <p className="mt-2 text-sm leading-6 text-[#526158]">La configuración avanzada se añadirá sobre este espacio sin cambiar tus fuentes ni tus alertas actuales.</p>
+      </aside>
+    </section>
+  );
 }
