@@ -90,7 +90,9 @@ export function PrivateWebApp() {
   const [feeds, setFeeds] = useState<Feed[]>([]);
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
 
   async function loadWorkspace() {
     if (!apiBaseUrl) {
@@ -103,18 +105,24 @@ export function PrivateWebApp() {
       return;
     }
     const currentUser = (await meResponse.json()) as CurrentUser;
-    const [alertsResponse, feedsResponse, subscriptionResponse] = await Promise.all([
-      fetch(`${apiBaseUrl}/api/web/alerts`, { credentials: "include" }),
-      fetch(`${apiBaseUrl}/api/web/feeds`, { credentials: "include" }),
-      fetch(`${apiBaseUrl}/api/web/subscription`, { credentials: "include" }),
-    ]);
-    if (!alertsResponse.ok || !feedsResponse.ok || !subscriptionResponse.ok) {
-      throw new Error("No se pudo cargar el espacio de trabajo.");
-    }
     setUser(currentUser);
-    setAlerts((await alertsResponse.json()) as Alert[]);
-    setFeeds((await feedsResponse.json()) as Feed[]);
-    setSubscription((await subscriptionResponse.json()) as Subscription);
+
+    try {
+      const [alertsResponse, feedsResponse, subscriptionResponse] = await Promise.all([
+        fetch(`${apiBaseUrl}/api/web/alerts`, { credentials: "include" }),
+        fetch(`${apiBaseUrl}/api/web/feeds`, { credentials: "include" }),
+        fetch(`${apiBaseUrl}/api/web/subscription`, { credentials: "include" }),
+      ]);
+      if (!alertsResponse.ok || !feedsResponse.ok || !subscriptionResponse.ok) {
+        throw new Error("No se pudo cargar el espacio de trabajo.");
+      }
+      setAlerts((await alertsResponse.json()) as Alert[]);
+      setFeeds((await feedsResponse.json()) as Feed[]);
+      setSubscription((await subscriptionResponse.json()) as Subscription);
+      setWorkspaceError(null);
+    } catch {
+      setWorkspaceError("No se pudieron cargar tus datos. Comprueba tu conexión e inténtalo de nuevo.");
+    }
   }
 
   useEffect(() => {
@@ -124,12 +132,24 @@ export function PrivateWebApp() {
       .finally(() => setIsLoading(false));
   }, []);
 
+  async function retryLoadWorkspace() {
+    setIsRefreshing(true);
+    try {
+      await loadWorkspace();
+    } catch {
+      setWorkspaceError("No se pudieron cargar tus datos. Comprueba tu conexión e inténtalo de nuevo.");
+    } finally {
+      setIsRefreshing(false);
+    }
+  }
+
   async function logout() {
     await fetch(`${apiBaseUrl}/api/web/auth/logout`, { method: "POST", credentials: "include" });
     setUser(null);
     setAlerts([]);
     setFeeds([]);
     setSubscription(null);
+    setWorkspaceError(null);
     setView("opportunities");
   }
 
@@ -204,7 +224,12 @@ export function PrivateWebApp() {
   }
 
   if (isLoading) {
-    return <main className="grid min-h-screen place-items-center text-sm text-[#5d6962]">Cargando panel...</main>;
+    return (
+      <main className="grid min-h-screen place-items-center gap-3 text-sm text-[#5d6962]">
+        <Loader2 size={22} className="animate-spin text-[var(--accent)]" />
+        Cargando panel...
+      </main>
+    );
   }
 
   if (!user) {
@@ -214,20 +239,33 @@ export function PrivateWebApp() {
   return (
     <main className="min-h-screen bg-[var(--background)]">
       <header className="border-b bg-[var(--surface)]">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-5 px-5 py-4 sm:px-8">
-          <div className="flex items-center gap-3"><Brand /><span className="font-[family-name:var(--font-display)] font-semibold">OportunidadBot</span></div>
-          <div className="flex items-center gap-3"><span className="hidden text-sm text-[#657168] sm:block">@{user.username || "usuario"}</span><button title="Cerrar sesión" aria-label="Cerrar sesión" onClick={() => void logout()} className="grid size-9 place-items-center border bg-white text-[#536158] hover:border-[var(--accent)] hover:text-[var(--accent)]"><LogOut size={17} /></button></div>
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3 sm:gap-5 sm:px-8 sm:py-4">
+          <div className="flex min-w-0 items-center gap-2 sm:gap-3"><Brand /><span className="truncate font-[family-name:var(--font-display)] text-sm font-semibold sm:text-base">OportunidadBot</span></div>
+          <div className="flex shrink-0 items-center gap-2 sm:gap-3"><span className="hidden text-xs text-[#657168] sm:text-sm sm:block">@{user.username || "usuario"}</span><button title="Cerrar sesión" aria-label="Cerrar sesión" onClick={() => void logout()} className="grid size-9 place-items-center border bg-white text-[#536158] hover:border-[var(--accent)] hover:text-[var(--accent)]"><LogOut size={17} /></button></div>
         </div>
       </header>
-      <div className="mx-auto max-w-7xl px-5 py-8 sm:px-8 sm:py-12">
-        <div className="flex flex-col justify-between gap-6 border-b pb-7 sm:flex-row sm:items-end">
-          <div><p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--accent)]">Plan {user.plan}</p><h1 className="mt-2 font-[family-name:var(--font-display)] text-3xl font-semibold sm:text-4xl">Espacio de oportunidades</h1></div>
-          <div className="inline-flex w-fit border bg-white p-1" role="tablist" aria-label="Panel">
-            <button role="tab" aria-selected={view === "opportunities"} onClick={() => setView("opportunities")} className={`flex h-9 items-center gap-2 px-3 text-sm ${view === "opportunities" ? "bg-[var(--accent)] text-white" : "text-[#516057]"}`}><BellRing size={16} />Oportunidades</button>
-            <button role="tab" aria-selected={view === "settings"} onClick={() => setView("settings")} className={`flex h-9 items-center gap-2 px-3 text-sm ${view === "settings" ? "bg-[var(--accent)] text-white" : "text-[#516057]"}`}><Settings2 size={16} />Configuración</button>
-            <button role="tab" aria-selected={view === "subscription"} onClick={() => setView("subscription")} className={`flex h-9 items-center gap-2 px-3 text-sm ${view === "subscription" ? "bg-[var(--accent)] text-white" : "text-[#516057]"}`}><CreditCard size={16} />Suscripción</button>
+      <div className="mx-auto max-w-7xl px-4 py-6 sm:px-8 sm:py-12">
+        <div className="flex flex-col justify-between gap-4 border-b pb-5 sm:gap-6 sm:pb-7 sm:flex-row sm:items-end">
+          <div><p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--accent)]">Plan {user.plan}</p><h1 className="mt-1 font-[family-name:var(--font-display)] text-2xl font-semibold sm:mt-2 sm:text-3xl sm:text-4xl">Espacio de oportunidades</h1></div>
+          <div className="flex w-full overflow-x-auto border bg-white p-1 sm:w-fit" role="tablist" aria-label="Panel">
+            <button role="tab" aria-selected={view === "opportunities"} onClick={() => setView("opportunities")} className={`flex h-9 shrink-0 items-center gap-2 px-2.5 text-xs sm:px-3 sm:text-sm ${view === "opportunities" ? "bg-[var(--accent)] text-white" : "text-[#516057]"}`}><BellRing size={16} />Oportunidades</button>
+            <button role="tab" aria-selected={view === "settings"} onClick={() => setView("settings")} className={`flex h-9 shrink-0 items-center gap-2 px-2.5 text-xs sm:px-3 sm:text-sm ${view === "settings" ? "bg-[var(--accent)] text-white" : "text-[#516057]"}`}><Settings2 size={16} />Configuración</button>
+            <button role="tab" aria-selected={view === "subscription"} onClick={() => setView("subscription")} className={`flex h-9 shrink-0 items-center gap-2 px-2.5 text-xs sm:px-3 sm:text-sm ${view === "subscription" ? "bg-[var(--accent)] text-white" : "text-[#516057]"}`}><CreditCard size={16} />Suscripción</button>
           </div>
         </div>
+        {workspaceError && (
+          <div className="mt-6 flex flex-col gap-3 border border-[#f0cbb8] bg-[#fdf3ea] px-4 py-3 text-sm text-[#a43820] sm:flex-row sm:items-center sm:justify-between">
+            <span className="flex items-center gap-2"><CircleAlert size={16} />{workspaceError}</span>
+            <button
+              onClick={() => void retryLoadWorkspace()}
+              disabled={isRefreshing}
+              className="inline-flex h-8 shrink-0 items-center justify-center gap-2 border border-[#a43820] px-3 text-xs font-semibold text-[#a43820] disabled:opacity-50"
+            >
+              {isRefreshing ? <Loader2 size={14} className="animate-spin" /> : null}
+              Reintentar
+            </button>
+          </div>
+        )}
         {view === "opportunities" && <Opportunities alerts={alerts} />}
         {view === "settings" && <Configuration feeds={feeds} onAdd={addFeed} onToggle={toggleFeed} onDelete={deleteFeed} />}
         {view === "subscription" && <SubscriptionPanel subscription={subscription} onCheckout={startCheckout} onOpenPortal={openBillingPortal} />}
@@ -352,7 +390,7 @@ function LoginScreen({ error, apiBaseUrl }: { error: string | null; apiBaseUrl?:
 }
 
 function Opportunities({ alerts }: { alerts: Alert[] }) {
-  if (!alerts.length) return <section className="pt-8"><div className="border border-dashed bg-white px-6 py-14 text-center"><BellRing className="mx-auto text-[var(--accent)]" size={27} /><h2 className="mt-4 font-[family-name:var(--font-display)] text-lg font-semibold">Sin alertas todavía</h2><p className="mt-2 text-sm text-[#657168]">Las oportunidades aparecerán aquí cuando se detecten en tus fuentes activas.</p></div></section>;
+  if (!alerts.length) return <section className="pt-4 sm:pt-8"><div className="border border-dashed bg-white px-4 py-10 text-center sm:px-6 sm:py-14"><BellRing className="mx-auto text-[var(--accent)]" size={24} /><h2 className="mt-3 font-[family-name:var(--font-display)] text-base font-semibold sm:mt-4 sm:text-lg">Sin alertas todavía</h2><p className="mt-1 text-xs text-[#657168] sm:mt-2 sm:text-sm">Las oportunidades aparecerán aquí cuando se detecten en tus fuentes activas.</p></div></section>;
   return <section className="pt-8"><div className="mb-6 flex items-center justify-between"><div><h2 className="font-[family-name:var(--font-display)] text-xl font-semibold">Alertas recientes</h2><p className="mt-1 text-sm text-[#657168]">{alerts.length} oportunidades detectadas</p></div><SlidersHorizontal className="text-[#6d7b71]" size={20} /></div><div className="grid gap-4">{alerts.map((alert) => <article key={alert.id} className="border bg-white p-5 transition hover:border-[#98b7a8] sm:p-6"><div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between"><div><div className="flex flex-wrap items-center gap-2 text-xs font-medium text-[#657168]"><Radio size={14} className="text-[var(--accent)]" /><span>{alert.source_url ?? "Fuente no disponible"}</span><span className="h-1 w-1 bg-[#9da69f]" /><span>{formatDate(alert.detected_at)}</span></div><h3 className="mt-3 font-[family-name:var(--font-display)] text-xl font-semibold leading-7">{alert.title}</h3></div><span className={`inline-flex w-fit items-center gap-1.5 px-2.5 py-1 text-xs font-semibold ${alert.sent_at ? "bg-[var(--accent-soft)] text-[var(--accent-deep)]" : "bg-[#fff0df] text-[var(--amber)]"}`}>{alert.sent_at ? <CheckCircle2 size={14} /> : <CircleAlert size={14} />}{alert.sent_at ? "Enviada" : "Pendiente"}</span></div>{alert.content && <p className="mt-4 max-w-3xl whitespace-pre-wrap text-sm leading-6 text-[#58655d]">{alert.content}</p>}<div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t pt-4 text-sm"><span className="text-[#657168]">{alert.author ? `Publicado por ${alert.author}` : "Autor no disponible"}</span>{alert.url && <a href={alert.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 font-semibold text-[var(--accent)] hover:text-[var(--accent-deep)]">Ver publicación <ExternalLink size={15} /></a>}</div></article>)}</div></section>;
 }
 
@@ -411,19 +449,19 @@ function Configuration({
         <h2 className="font-[family-name:var(--font-display)] text-xl font-semibold">Fuentes activas</h2>
         <p className="mt-1 text-sm text-[#657168]">Estas fuentes determinan dónde busca OportunidadBot.</p>
 
-        <form onSubmit={handleAddSubmit} className="mt-5 flex flex-col gap-3 border bg-white p-4 sm:flex-row sm:items-center">
+        <form onSubmit={handleAddSubmit} className="mt-5 flex flex-col gap-2 border bg-white p-3 sm:flex-row sm:items-center sm:gap-3 sm:p-4">
           <input
             type="text"
             value={newUrl}
             onChange={(event) => setNewUrl(event.target.value)}
             placeholder="https://reddit.com/r/murcia"
             aria-label="URL de la nueva fuente"
-            className="h-10 flex-1 border px-3 text-sm outline-none focus:border-[var(--accent)]"
+            className="h-11 flex-1 border px-3 text-sm outline-none focus:border-[var(--accent)] sm:h-10"
           />
           <button
             type="submit"
             disabled={isAdding || !newUrl.trim()}
-            className="inline-flex h-10 items-center justify-center gap-2 bg-[var(--accent)] px-4 text-sm font-semibold text-white disabled:opacity-50"
+            className="inline-flex h-11 items-center justify-center gap-2 bg-[var(--accent)] px-4 text-sm font-semibold text-white disabled:opacity-50 sm:h-10"
           >
             {isAdding ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
             Añadir fuente
@@ -434,10 +472,10 @@ function Configuration({
 
         <div className="mt-5 divide-y border bg-white">
           {feeds.length === 0 ? (
-            <div className="px-5 py-10 text-center text-sm text-[#657168]">No hay fuentes configuradas.</div>
+            <div className="px-4 py-12 text-center text-sm text-[#657168] sm:px-5 sm:py-10">No hay fuentes configuradas.</div>
           ) : (
             feeds.map((feed) => (
-              <div key={feed.id} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <div key={feed.id} className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5 sm:py-4">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium">{feed.url}</p>
                   <p className="mt-1 text-xs text-[#657168]">{feed.last_check ? `Última revisión: ${formatDate(feed.last_check)}` : "Aún sin revisiones"}</p>
@@ -452,11 +490,11 @@ function Configuration({
                       <button
                         onClick={() => void handleConfirmDelete(feed.id)}
                         disabled={pendingActionId === feed.id}
-                        className="h-8 border bg-[#a43820] px-3 text-xs font-semibold text-white disabled:opacity-50"
+                        className="h-9 border bg-[#a43820] px-2.5 text-xs font-semibold text-white disabled:opacity-50 sm:h-8 sm:px-3"
                       >
                         Confirmar
                       </button>
-                      <button onClick={() => setConfirmDeleteId(null)} className="h-8 border bg-white px-3 text-xs font-semibold text-[#536158]">
+                      <button onClick={() => setConfirmDeleteId(null)} className="h-9 border bg-white px-2.5 text-xs font-semibold text-[#536158] sm:h-8 sm:px-3">
                         Cancelar
                       </button>
                     </>
@@ -467,7 +505,7 @@ function Configuration({
                         aria-label={feed.is_active ? "Pausar fuente" : "Reanudar fuente"}
                         onClick={() => void handleToggle(feed)}
                         disabled={pendingActionId === feed.id}
-                        className="grid size-8 place-items-center border bg-white text-[#536158] hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:opacity-50"
+                        className="grid size-9 place-items-center border bg-white text-[#536158] hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:opacity-50 sm:size-8"
                       >
                         {pendingActionId === feed.id ? <Loader2 size={15} className="animate-spin" /> : feed.is_active ? <Pause size={15} /> : <Play size={15} />}
                       </button>
@@ -476,7 +514,7 @@ function Configuration({
                         aria-label="Eliminar fuente"
                         onClick={() => setConfirmDeleteId(feed.id)}
                         disabled={pendingActionId === feed.id}
-                        className="grid size-8 place-items-center border bg-white text-[#536158] hover:border-[#a43820] hover:text-[#a43820] disabled:opacity-50"
+                        className="grid size-9 place-items-center border bg-white text-[#536158] hover:border-[#a43820] hover:text-[#a43820] disabled:opacity-50 sm:size-8"
                       >
                         <Trash2 size={15} />
                       </button>
@@ -534,14 +572,14 @@ function SubscriptionPanel({
   const limitLabel = subscription.source_limit === null ? "Ilimitadas" : `${subscription.source_limit}`;
 
   return (
-    <section className="grid gap-8 pt-8 lg:grid-cols-[0.9fr_1.1fr]">
-      <div className="border bg-white p-6">
+    <section className="grid gap-6 pt-4 sm:gap-8 sm:pt-8 lg:grid-cols-[0.9fr_1.1fr]">
+      <div className="border bg-white p-4 sm:p-6">
         <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--accent)]">Plan actual</p>
         <h2 className="mt-2 font-[family-name:var(--font-display)] text-2xl font-semibold capitalize">{subscription.plan}</h2>
         <span className={`mt-3 inline-flex w-fit px-2 py-1 text-xs font-semibold ${subscription.status === "active" ? "bg-[var(--accent-soft)] text-[var(--accent-deep)]" : "bg-[#fff0df] text-[var(--amber)]"}`}>
           {STATUS_LABELS[subscription.status] ?? subscription.status}
         </span>
-        <dl className="mt-6 grid gap-4 text-sm">
+        <dl className="mt-4 grid gap-3 text-sm sm:mt-6 sm:gap-4">
           <div className="flex justify-between border-b pb-3"><dt className="text-[#657168]">Fuentes usadas</dt><dd className="font-medium">{subscription.sources_used} / {limitLabel}</dd></div>
           <div className="flex justify-between border-b pb-3"><dt className="text-[#657168]">Fuentes disponibles</dt><dd className="font-medium">{remainingLabel}</dd></div>
           <div className="flex justify-between border-b pb-3"><dt className="text-[#657168]">Próxima renovación</dt><dd className="font-medium">{formatDate(subscription.current_period_end)}</dd></div>
@@ -550,29 +588,29 @@ function SubscriptionPanel({
         <button
           onClick={() => void handleOpenPortal()}
           disabled={!subscription.has_stripe_customer || isOpeningPortal}
-          className="mt-6 inline-flex h-10 w-full items-center justify-center gap-2 border bg-white px-4 text-sm font-semibold text-[#536158] hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:opacity-50"
+          className="mt-4 inline-flex h-11 w-full items-center justify-center gap-2 border bg-white px-4 text-sm font-semibold text-[#536158] hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:opacity-50 sm:mt-6 sm:h-10"
         >
           {isOpeningPortal ? <Loader2 size={16} className="animate-spin" /> : <CreditCard size={16} />}
           Gestionar en Stripe Portal
         </button>
-        {!subscription.has_stripe_customer && <p className="mt-2 text-xs text-[#657168]">Aún no tienes un cliente de Stripe asociado. Contrata un plan para activarlo.</p>}
+        {!subscription.has_stripe_customer && <p className="mt-1.5 text-xs text-[#657168] leading-5">Aún no tienes un cliente de Stripe asociado. Contrata un plan para activarlo.</p>}
         {actionError && <p className="mt-3 flex items-center gap-2 text-sm text-[#a43820]"><CircleAlert size={16} />{actionError}</p>}
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-3 sm:gap-4 sm:grid-cols-3">
         {subscription.plans.map((plan) => {
           const isCurrent = plan.identifier === subscription.plan;
           return (
-            <div key={plan.identifier} className={`flex flex-col border bg-white p-5 ${isCurrent ? "border-[var(--accent)]" : ""}`}>
-              <p className="font-[family-name:var(--font-display)] text-lg font-semibold">{plan.name}</p>
-              <p className="mt-1 text-2xl font-semibold">{plan.price} {plan.currency}<span className="text-sm font-normal text-[#657168]">/mes</span></p>
-              <ul className="mt-4 flex-1 space-y-2 text-sm text-[#58655d]">
+            <div key={plan.identifier} className={`flex flex-col border bg-white p-4 sm:p-5 ${isCurrent ? "border-[var(--accent)] border-2" : ""}`}>
+              <p className="font-[family-name:var(--font-display)] text-base font-semibold sm:text-lg">{plan.name}</p>
+              <p className="mt-1 text-xl font-semibold sm:text-2xl">{plan.price} {plan.currency}<span className="text-xs font-normal text-[#657168] sm:text-sm">/mes</span></p>
+              <ul className="mt-3 flex-1 space-y-1.5 text-xs text-[#58655d] sm:mt-4 sm:space-y-2 sm:text-sm">
                 {plan.features.map((feature) => <li key={feature}>• {feature}</li>)}
               </ul>
               <button
                 onClick={() => void handleCheckout(plan.identifier)}
                 disabled={isCurrent || pendingPlan === plan.identifier}
-                className="mt-5 inline-flex h-10 items-center justify-center gap-2 bg-[var(--accent)] px-4 text-sm font-semibold text-white disabled:opacity-50"
+                className="mt-4 inline-flex h-11 items-center justify-center gap-2 bg-[var(--accent)] px-4 text-sm font-semibold text-white disabled:opacity-50 sm:mt-5 sm:h-10"
               >
                 {pendingPlan === plan.identifier ? <Loader2 size={16} className="animate-spin" /> : null}
                 {isCurrent ? "Plan actual" : "Contratar"}
