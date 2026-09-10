@@ -1,8 +1,10 @@
 import asyncio
+import json
 import time
 from collections import OrderedDict
-from typing import Optional
-import inspect
+from typing import Iterable, Optional
+
+import httpx
 
 from app.services.prompts import REAL_ESTATE_CLASSIFIER_PROMPT
 
@@ -11,13 +13,6 @@ from loguru import logger
 from app.config import settings
 from app.debug.trace_service import get_trace_service
 from app.debug.trace_models import EventType
-
-# Require OpenAI SDK for the classifier
-try:
-    from openai import OpenAI  # type: ignore
-except Exception as exc:  # pragma: no cover - installation environment dependent
-    OpenAI = None
-    logger.error("OpenAI SDK no está instalado: %s", exc)
 
 
 class AIClassifier:
@@ -38,16 +33,7 @@ class AIClassifier:
             "responses_no": 0,
             "errors": 0,
         }
-        # Enforce SDK usage
-        if not OpenAI:
-            raise ImportError("El paquete 'openai' no está instalado. Instálalo con 'pip install openai'.")
-
-        try:
-            self._sdk_client = OpenAI(base_url=self._base_url, api_key=self._api_key)
-            logger.debug("OpenAI SDK client initialized", base_url=self._base_url)
-        except Exception as exc:  # pragma: no cover - environment dependent
-            logger.exception(f"No se pudo inicializar OpenAI SDK: {exc}")
-            raise
+        self._endpoint = f"{self._base_url.rstrip('/')}/chat/completions" if self._base_url else None
 
     async def is_business_opportunity(self, title: str, summary: str) -> bool:
         """Devuelve True si el texto parece una oportunidad de negocio relevante."""
@@ -126,10 +112,51 @@ class AIClassifier:
         if len(self._cache) > self._cache_limit:
             self._cache.popitem(last=False)
 
+    @staticmethod
+    def _extract_delta_content(chunk: dict) -> Optional[str]:
+        """Extrae el texto incremental de un fragmento SSE de NVIDIA."""
+        try:
+            choices = chunk.get("choices") or []
+            if not choices:
+                return None
+            delta = choices[0].get("delta") or {}
+            return delta.get("content")
+        except Exception:
+            return None
+
+    def _parse_sse_lines(self, lines: Iterable[object]) -> str:
+        """Procesa líneas SSE (`data: ...` / `[DONE]`) y devuelve el texto concatenado."""
+        content_parts: list[str] = []
+        for raw_line in lines:
+            if raw_line is None:
+                continue
+            line = raw_line.decode("utf-8", errors="ignore") if isinstance(raw_line, bytes) else str(raw_line)
+            line = line.strip()
+            if not line:
+                continue
+            if not line.startswith("data:"):
+                continue
+            data_str = line[len("data:"):].strip()
+            if data_str == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data_str)
+            except json.JSONDecodeError:
+                logger.warning("Fragmento SSE de NVIDIA no es JSON válido; se omite")
+                continue
+            delta_content = self._extract_delta_content(chunk)
+            if delta_content:
+                content_parts.append(delta_content)
+        return "".join(content_parts).strip()
+
     async def _call_nvidia(self, title: str, summary: str) -> Optional[str]:
-        """Realiza la llamada a la API de NVIDIA usando exclusivamente el SDK OpenAI y devuelve el texto generado."""
+        """Realiza la llamada HTTP directa (SSE) a NVIDIA NIM y devuelve el texto generado."""
         if not self._api_key:
             logger.warning("No hay API key de NVIDIA configurada; se omite la llamada")
+            return None
+
+        if not self._endpoint:
+            logger.warning("No hay NVIDIA_BASE_URL configurada; se omite la llamada")
             return None
 
         messages = [
@@ -137,65 +164,70 @@ class AIClassifier:
             {"role": "user", "content": f"Título: {title}\n\nContenido: {summary}"},
         ]
 
+        payload = {
+            "model": self._model,
+            "messages": messages,
+            "temperature": 0.2,
+            "top_p": 0.7,
+            "max_tokens": 1024,
+            "stream": True,
+        }
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Accept": "text/event-stream",
+            "Content-Type": "application/json",
+        }
+
         last_error: Optional[Exception] = None
         for attempt in range(self._max_retries):
+            request_start = time.perf_counter()
             try:
-                # Llamada directa siguiendo tu ejemplo (OpenAI library)
-                completion = self._sdk_client.chat.completions.create(
-                    model=self._model,
-                    messages=messages,
-                    temperature=0.2,
-                    top_p=0.7,
-                    max_tokens=1024,
-                    stream=True,
-                )
+                with httpx.Client(timeout=self._timeout) as client:
+                    with client.stream("POST", self._endpoint, json=payload, headers=headers) as response:
+                        if response.status_code >= 400:
+                            response.read()
+                            logger.warning(
+                                "NVIDIA respondió con error HTTP",
+                                status_code=response.status_code,
+                                model=self._model,
+                                endpoint=self._endpoint,
+                            )
+                            if response.status_code in (401, 403):
+                                # Credenciales inválidas: reintentar no lo arreglará
+                                return None
+                            response.raise_for_status()
 
-                if inspect.isawaitable(completion):
-                    completion = await completion
+                        content = self._parse_sse_lines(response.iter_lines())
+                        elapsed = round(time.perf_counter() - request_start, 3)
+                        logger.debug(
+                            "Llamada a NVIDIA completada",
+                            model=self._model,
+                            endpoint=self._endpoint,
+                            status_code=response.status_code,
+                            elapsed_s=elapsed,
+                        )
 
-                content_parts: list[str] = []
-
-                # Iterar los chunks como en tu snippet
-                for chunk in completion:
-                    try:
-                        if getattr(chunk.choices[0].delta, "content", None) is not None:
-                            content_parts.append(chunk.choices[0].delta.content)
-                    except Exception:
-                        # Fallback best-effort when chunk is a mapping
-                        try:
-                            if isinstance(chunk, dict):
-                                choices = chunk.get("choices") or []
-                                if choices and choices[0].get("delta", {}).get("content"):
-                                    content_parts.append(choices[0]["delta"]["content"])
-                        except Exception:
-                            pass
-
-                if content_parts:
-                    return "".join(str(p) for p in content_parts).strip()
-
-                # Fallback: tratar completion como respuesta no-stream
-                resp = completion
-                choices = None
-                try:
-                    choices = resp.get("choices") if hasattr(resp, "get") else getattr(resp, "choices", None)
-                except Exception:
-                    choices = getattr(resp, "choices", None)
-
-                if not choices:
-                    logger.warning("La respuesta SDK de NVIDIA no contiene choices")
-                    return None
-
-                first = choices[0]
-                message = first.get("message") if isinstance(first, dict) else getattr(first, "message", None)
-                content = message.get("content") if isinstance(message, dict) else getattr(message, "content", "")
-                return str(content).strip()
+                        if not content:
+                            logger.warning("NVIDIA devolvió una respuesta vacía", model=self._model)
+                            return None
+                        return content
+            except httpx.TimeoutException as exc:
+                last_error = exc
+                logger.warning(f"Timeout llamando a NVIDIA (intento {attempt + 1}/{self._max_retries})")
+            except httpx.HTTPStatusError as exc:
+                last_error = exc
+                logger.warning(f"Error HTTP llamando a NVIDIA (intento {attempt + 1}/{self._max_retries}): {exc}")
+            except httpx.RequestError as exc:
+                last_error = exc
+                logger.warning(f"Error de conexión llamando a NVIDIA (intento {attempt + 1}/{self._max_retries}): {exc}")
             except Exception as exc:
                 last_error = exc
-                logger.warning(f"Intento {attempt + 1}/{self._max_retries} fallido con OpenAI SDK: {exc}")
-                if attempt < self._max_retries - 1:
-                    await asyncio.sleep(1.0 * (attempt + 1))
+                logger.warning(f"Intento {attempt + 1}/{self._max_retries} fallido llamando a NVIDIA: {exc}")
 
-        logger.exception(f"Error final al llamar a NVIDIA via SDK: {last_error}")
+            if attempt < self._max_retries - 1:
+                await asyncio.sleep(1.0 * (attempt + 1))
+
+        logger.exception(f"Error final al llamar a NVIDIA: {last_error}")
         return None
 
     def _parse_response(self, response: Optional[str]) -> bool:
