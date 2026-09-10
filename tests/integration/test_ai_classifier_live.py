@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import os
 import pytest
-import unicodedata
+import httpx
 
-pytest.importorskip("openai")
-from openai import OpenAI
 from app.services.prompts import REAL_ESTATE_CLASSIFIER_PROMPT
 
 
@@ -23,8 +21,6 @@ def test_live_nvidia_classifier_exact_si_with_app_prompt():
     if not api_key or not base_url or not model:
         pytest.skip("NVIDIA credentials not provided in environment")
 
-    client = OpenAI(base_url=base_url, api_key=api_key)
-
     title = "Busco piso de alquiler"
     summary = "Necesito un piso en el centro para mudarme cuanto antes"
 
@@ -34,29 +30,37 @@ def test_live_nvidia_classifier_exact_si_with_app_prompt():
         {"role": "user", "content": f"Título: {title}\n\nContenido: {summary}"},
     ]
 
+    endpoint = f"{base_url.rstrip('/')}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": 0.0,
+        "max_tokens": 1024,
+        "stream": False,
+    }
+
     try:
-        resp = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=0.0,
-            max_tokens=1024,
-            stream=False,
-        )
+        resp = httpx.post(endpoint, json=payload, headers=headers, timeout=20.0)
+        resp.raise_for_status()
+        data = resp.json()
     except Exception as exc:
         pytest.skip(f"Live API call failed (connectivity): {exc}")
 
-    # Extract content from response
     content = ""
     try:
-        choices = resp.get("choices") if isinstance(resp, dict) else getattr(resp, "choices", None)
+        choices = data.get("choices") or []
         if choices:
-            first = choices[0]
-            message = first.get("message") if isinstance(first, dict) else getattr(first, "message", None)
-            content = message.get("content") if isinstance(message, dict) else getattr(message, "content", "")
+            content = choices[0].get("message", {}).get("content", "")
     except Exception:
-        content = str(resp)
+        content = str(data)
 
     assert content, "La API no devolvió contenido"
+
 
     # normalize: remove diacritics, whitespace and lowercase
     normalized = unicodedata.normalize("NFKD", content).encode("ascii", "ignore").decode().strip().lower()

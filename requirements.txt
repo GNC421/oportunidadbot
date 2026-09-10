@@ -30,9 +30,6 @@ APScheduler==3.11.0
 httpx==0.28.1
 stripe==10.9.0
 
-# IA
-openai==1.97.1
-
 # Reintentos
 tenacity==9.1.2
 
