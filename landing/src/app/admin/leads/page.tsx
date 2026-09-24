@@ -1,5 +1,6 @@
 import { Building2, Mail, MapPin, Phone, Users } from "lucide-react";
 
+import type { Metadata } from "next";
 import {
   Card,
   CardContent,
@@ -10,6 +11,14 @@ import {
 import { getSupabaseAdminClient, type EarlyAccessLead } from "@/lib/supabase-admin";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "Panel privado",
+  robots: {
+    index: false,
+    follow: false,
+  },
+};
 
 function formatDate(dateIso: string) {
   return new Intl.DateTimeFormat("es-ES", {
