@@ -33,6 +33,17 @@ ADMIN_USERNAME=tu_usuario_admin
 ADMIN_PASSWORD=tu_password_admin
 ```
 
+SEO opcional (recomendada en produccion):
+
+```env
+NEXT_PUBLIC_SITE_URL=https://oportunidadbot.com
+NEXT_PUBLIC_LINKEDIN_URL=https://www.linkedin.com/in/tu-perfil/
+```
+
+Se usa como dominio canonico en metadata, `sitemap.xml`, `robots.txt` y Open Graph. Si no se define, se usa `https://oportunidadbot.com` como valor por defecto.
+
+`NEXT_PUBLIC_LINKEDIN_URL` controla el enlace a LinkedIn en el footer y en /about. Si no se define, el enlace simplemente no se muestra (no se generan enlaces rotos).
+
 Notas:
 
 - Para esta landing, SUPABASE_URL y SUPABASE_KEY son obligatorias para guardar/leer leads.
@@ -63,8 +74,11 @@ create index if not exists early_access_leads_created_at_idx
 ## Rutas
 
 - Landing publica: /
+- Sobre nosotros: /about
 - Endpoint de formulario: /api/early-access
-- Dashboard privado: /admin/leads
+- Dashboard privado: /admin/leads (noindex, protegido con Basic Auth)
+- Sitemap: /sitemap.xml
+- Robots: /robots.txt
 
 ## Desarrollo local
 
