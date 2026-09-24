@@ -26,6 +26,8 @@ import {
   TimerReset,
 } from "lucide-react";
 
+import Link from "next/link";
+
 import { SectionHeading } from "@/components/section-heading";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -38,6 +40,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { isRealUrl, siteConfig } from "@/lib/site";
 import { cn } from "@/lib/utils";
 
 const fadeUp = {
@@ -319,6 +322,7 @@ export function LandingPage() {
               <a href="#como-funciona" className="transition hover:text-foreground">Cómo funciona</a>
               <a href="#beneficios" className="transition hover:text-foreground">Beneficios</a>
               <a href="#precios" className="transition hover:text-foreground">Precios</a>
+              <Link href="/about" className="transition hover:text-foreground">Sobre nosotros</Link>
               <a href="#contacto" className="transition hover:text-foreground">Acceso anticipado</a>
             </nav>
             <Button asChild size="sm" className="hidden md:inline-flex">
@@ -854,7 +858,18 @@ export function LandingPage() {
               <a href="#problema" className="transition hover:text-foreground">Problema</a>
               <a href="#beneficios" className="transition hover:text-foreground">Beneficios</a>
               <a href="#precios" className="transition hover:text-foreground">Precios</a>
+              <Link href="/about" className="transition hover:text-foreground">Sobre nosotros</Link>
               <a href="#contacto" className="transition hover:text-foreground">Contacto</a>
+              {isRealUrl(siteConfig.links.linkedin) ? (
+                <a
+                  href={siteConfig.links.linkedin}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="transition hover:text-foreground"
+                >
+                  LinkedIn
+                </a>
+              ) : null}
             </div>
           </div>
         </footer>
