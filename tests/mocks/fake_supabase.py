@@ -92,12 +92,14 @@ class FakeSupabase:
             "feeds": [],
             "alerts": [],
             "stripe_webhook_events": [],
+            "subscription_trials": [],
         }
         self._ids: dict[str, int] = {
             "users": 1,
             "feeds": 1,
             "alerts": 1,
             "stripe_webhook_events": 1,
+            "subscription_trials": 1,
         }
 
     @property

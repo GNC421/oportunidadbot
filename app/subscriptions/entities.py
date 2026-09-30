@@ -15,6 +15,7 @@ class Plan(str, Enum):
 
 
 class SubscriptionStatus(str, Enum):
+    INACTIVE = "inactive"
     ACTIVE = "active"
     TRIALING = "trialing"
     PAST_DUE = "past_due"

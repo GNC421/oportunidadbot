@@ -33,7 +33,7 @@ class SubscriptionService:
         user = self._user_reader(user_id) or {}
 
         plan = self._parse_plan(str(user.get("plan") or Plan.STARTER.value))
-        status = self._parse_status(str(user.get("subscription_status") or SubscriptionStatus.ACTIVE.value))
+        status = self._parse_status(str(user.get("subscription_status") or SubscriptionStatus.INACTIVE.value))
 
         plan_definition = self._catalog.get_plan(plan.value)
         return Subscription(
@@ -49,7 +49,7 @@ class SubscriptionService:
 
     def can_add_source(self, user_id: int) -> bool:
         subscription = self.get_current_subscription(user_id)
-        if subscription.status not in self._ALLOWED_SOURCE_STATUSES:
+        if not self._has_valid_entitlement(subscription):
             return False
 
         remaining = self.get_remaining_sources(user_id)
@@ -61,7 +61,15 @@ class SubscriptionService:
             return False
 
         subscription = self.get_current_subscription(user_id)
+        if not self._has_valid_entitlement(subscription):
+            return False
         return any(feature.lower() == normalized_feature for feature in subscription.plan_definition.features)
+
+    def _has_valid_entitlement(self, subscription: Subscription) -> bool:
+        return (
+            subscription.status in self._ALLOWED_SOURCE_STATUSES
+            and subscription.stripe_subscription_id is not None
+        )
 
     def get_remaining_sources(self, user_id: int) -> Optional[int]:
         subscription = self.get_current_subscription(user_id)
@@ -89,7 +97,7 @@ class SubscriptionService:
             return SubscriptionStatus(value)
         except ValueError:
             logger.warning("Unknown subscription status detected, fallback to active", status=raw_status)
-            return SubscriptionStatus.ACTIVE
+            return SubscriptionStatus.INACTIVE
 
     @staticmethod
     def _as_optional_str(value: Any) -> Optional[str]:

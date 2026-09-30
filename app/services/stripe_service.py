@@ -15,6 +15,10 @@ class StripeIntegrationError(RuntimeError):
     """Raised when Stripe integration configuration is missing or invalid."""
 
 
+class StarterTrialUnavailableError(StripeIntegrationError):
+    """Raised when a user has already started or used the Starter trial."""
+
+
 @dataclass(frozen=True)
 class CheckoutSessionResult:
     id: str
@@ -58,22 +62,56 @@ class StripeService:
         stripe.api_key = settings.STRIPE_SECRET_KEY
         return StripeService(stripe_client=stripe)
 
-    def create_checkout_session(self, user_id: int, plan: Plan, customer_id: Optional[str] = None) -> CheckoutSessionResult:
+    def create_checkout_session(
+        self,
+        user_id: int,
+        plan: Plan,
+        customer_id: Optional[str] = None,
+        starter_trial: bool = False,
+    ) -> CheckoutSessionResult:
         price_id = self._resolve_price_id(plan)
         success_url = self._require_value(self._success_url, "STRIPE_CHECKOUT_SUCCESS_URL")
         cancel_url = self._require_value(self._cancel_url, "STRIPE_CHECKOUT_CANCEL_URL")
 
-        checkout = self._stripe.checkout.Session.create(
-            mode="subscription",
-            line_items=[{"price": price_id, "quantity": 1}],
-            success_url=success_url,
-            cancel_url=cancel_url,
-            customer=customer_id,
-            metadata={
-                "user_id": str(user_id),
-                "plan": plan.value,
-            },
-        )
+        metadata = {"user_id": str(user_id), "plan": plan.value}
+        checkout_kwargs: dict[str, Any] = {
+            "mode": "subscription",
+            "line_items": [{"price": price_id, "quantity": 1}],
+            "success_url": success_url,
+            "cancel_url": cancel_url,
+            "customer": customer_id,
+            "metadata": metadata,
+        }
+        if starter_trial:
+            if plan is not Plan.STARTER:
+                raise StripeIntegrationError("El trial solo está disponible para Starter")
+
+            user = database.get_user(user_id)
+            if not user:
+                raise StripeIntegrationError("No se encontró el usuario para iniciar el trial")
+            current_status = str(user.get("subscription_status") or "inactive").lower()
+            if current_status in {"active", "trialing", "past_due", "incomplete", "unpaid"}:
+                raise StarterTrialUnavailableError("Ya tienes una suscripción que debes gestionar antes de iniciar un trial")
+
+            reservation = database.reserve_starter_trial(user_id)
+            if not reservation:
+                raise StripeIntegrationError("No se pudo reservar el trial Starter")
+            if reservation.get("status") != "pending":
+                raise StarterTrialUnavailableError("La prueba gratuita Starter ya fue utilizada")
+
+            metadata["starter_trial"] = "true"
+            checkout_kwargs.update(
+                {
+                    "payment_method_collection": "always",
+                    "subscription_data": {
+                        "trial_period_days": 30,
+                        "metadata": metadata.copy(),
+                    },
+                    "idempotency_key": str(reservation["idempotency_key"]),
+                }
+            )
+
+        checkout = self._stripe.checkout.Session.create(**checkout_kwargs)
         return CheckoutSessionResult(id=str(checkout.id), url=str(checkout.url))
 
     def get_customer(self, customer_id: str) -> Any:
@@ -123,8 +161,16 @@ class StripeService:
             self._handle_checkout_completed(event)
             return True
 
-        if event_type in {"customer.subscription.updated", "customer.subscription.deleted"}:
+        if event_type in {
+            "customer.subscription.created",
+            "customer.subscription.updated",
+            "customer.subscription.deleted",
+        }:
             self._handle_subscription_event(event)
+            return True
+
+        if event_type == "invoice.payment_succeeded":
+            self._handle_invoice_payment_succeeded(event)
             return True
 
         if event_type == "invoice.payment_failed":
@@ -154,6 +200,12 @@ class StripeService:
                 preferred_user_id=user_id,
                 fallback_customer_id=customer_id,
             )
+            self._sync_starter_trial_from_subscription(
+                user_id=user_id,
+                subscription_obj=dict(subscription),
+                checkout_session_id=self._as_optional_string(obj.get("id")),
+                event_created_at=self._event_created_at(event),
+            )
             return
 
         database.update_user_subscription(
@@ -169,6 +221,27 @@ class StripeService:
     def _handle_subscription_event(self, event: dict[str, Any]) -> None:
         subscription_obj = event.get("data", {}).get("object", {})
         self._sync_from_subscription_payload(subscription_obj=subscription_obj)
+        self._sync_starter_trial_from_subscription(
+            user_id=None,
+            subscription_obj=subscription_obj,
+            checkout_session_id=None,
+            event_created_at=self._event_created_at(event),
+        )
+
+    def _handle_invoice_payment_succeeded(self, event: dict[str, Any]) -> None:
+        invoice_obj = event.get("data", {}).get("object", {})
+        subscription_id = self._as_optional_string(invoice_obj.get("subscription"))
+        if not subscription_id:
+            return
+
+        subscription = dict(self.get_subscription(subscription_id))
+        self._sync_from_subscription_payload(subscription_obj=subscription)
+        self._sync_starter_trial_from_subscription(
+            user_id=None,
+            subscription_obj=subscription,
+            checkout_session_id=None,
+            event_created_at=self._event_created_at(event),
+        )
 
     def _handle_invoice_payment_failed(self, event: dict[str, Any]) -> None:
         invoice_obj = event.get("data", {}).get("object", {})
@@ -215,11 +288,15 @@ class StripeService:
 
         user_id = preferred_user_id
         if user_id is None:
-            user = database.get_user_by_stripe_customer_id(customer_id)
-            if not user:
-                logger.warning("No se encontró usuario para customer", customer_id=customer_id)
-                return
-            user_id = int(user["id"])
+            metadata_user_id = (subscription_obj.get("metadata") or {}).get("user_id")
+            if metadata_user_id is not None:
+                user_id = int(metadata_user_id)
+            else:
+                user = database.get_user_by_stripe_customer_id(customer_id)
+                if not user:
+                    logger.warning("No se encontró usuario para customer", customer_id=customer_id)
+                    return
+                user_id = int(user["id"])
 
         plan = self._resolve_plan_from_subscription(subscription_obj)
         status = self._resolve_subscription_status(str(subscription_obj.get("status") or "active"))
@@ -236,6 +313,45 @@ class StripeService:
             current_period_end=current_period_end,
             cancel_at_period_end=cancel_at_period_end,
         )
+
+    def _sync_starter_trial_from_subscription(
+        self,
+        user_id: Optional[int],
+        subscription_obj: dict[str, Any],
+        checkout_session_id: Optional[str],
+        event_created_at: Optional[str],
+    ) -> None:
+        metadata = subscription_obj.get("metadata", {}) or {}
+        if str(metadata.get("starter_trial") or "").lower() != "true":
+            return
+
+        if user_id is None:
+            raw_user_id = metadata.get("user_id")
+            if raw_user_id is not None:
+                user_id = int(raw_user_id)
+            else:
+                customer_id = self._as_optional_string(subscription_obj.get("customer"))
+                user = database.get_user_by_stripe_customer_id(customer_id) if customer_id else None
+                user_id = int(user["id"]) if user else None
+
+        if user_id is None:
+            logger.warning("No se encontró usuario para sincronizar trial Starter")
+            return
+
+        stripe_status = str(subscription_obj.get("status") or "").lower()
+        trial_status = "trial_active" if stripe_status == SubscriptionStatus.TRIALING.value else "trial_used"
+        database.sync_starter_trial(
+            user_id=user_id,
+            status=trial_status,
+            checkout_session_id=checkout_session_id,
+            subscription_id=self._as_optional_string(subscription_obj.get("id")),
+            trial_started_at=self._epoch_to_iso(subscription_obj.get("trial_start")),
+            trial_ends_at=self._epoch_to_iso(subscription_obj.get("trial_end")),
+            event_created_at=event_created_at,
+        )
+
+    def _event_created_at(self, event: dict[str, Any]) -> Optional[str]:
+        return self._epoch_to_iso(event.get("created"))
 
     def _resolve_price_id(self, plan: Plan) -> str:
         value = self._price_ids.get(plan)

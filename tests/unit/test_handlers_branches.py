@@ -29,9 +29,10 @@ def _build_message_update(user_id=101):
 
 
 @pytest.mark.asyncio
-async def test_start_and_help_commands():
+async def test_start_and_help_commands(monkeypatch):
     handlers = _load_handlers_module()
     update, context, replies = _build_message_update()
+    monkeypatch.setattr(handlers.database, "add_user", lambda *_args: True)
 
     await handlers.start_command(update, context)
     assert replies and "OportunidadBot" in replies[-1]["text"]

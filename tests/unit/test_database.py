@@ -5,6 +5,20 @@ import importlib
 from app import database
 
 
+def _seed_subscribed_user(fake_supabase, user_id: int = 101) -> None:
+    fake_supabase.seed(
+        "users",
+        [
+            {
+                "id": user_id,
+                "plan": "starter",
+                "subscription_status": "active",
+                "stripe_subscription_id": f"sub_{user_id}",
+            }
+        ],
+    )
+
+
 def test_database_module_reload_for_import_coverage():
     reloaded = importlib.reload(database)
     assert hasattr(reloaded, "add_user")
@@ -12,6 +26,7 @@ def test_database_module_reload_for_import_coverage():
 
 def test_database_save_and_get_feed(monkeypatch, fake_supabase):
     monkeypatch.setattr(database, "supabase", fake_supabase)
+    _seed_subscribed_user(fake_supabase)
 
     feed_id = database.add_feed(101, "https://rss.local/feed")
     feeds = database.get_user_feeds(101)
@@ -54,7 +69,7 @@ def test_database_add_or_update_user(monkeypatch, fake_supabase):
     assert user is not None
     assert user["username"] == "updated"
     assert user["plan"] == "starter"
-    assert user["subscription_status"] == "active"
+    assert user["subscription_status"] == "inactive"
     assert user["cancel_at_period_end"] is False
 
 
@@ -99,6 +114,65 @@ def test_database_get_user_by_stripe_customer_id(monkeypatch, fake_supabase):
     assert user["id"] == 101
 
 
+def test_database_reserves_starter_trial_via_atomic_rpc(monkeypatch):
+    class _RpcCall:
+        data = [{"status": "pending", "idempotency_key": "starter-trial:101"}]
+
+        def execute(self):
+            return self
+
+    class _RpcSupabase:
+        def rpc(self, name, params):
+            assert name == "reserve_starter_trial"
+            assert params == {"p_user_id": 101}
+            return _RpcCall()
+
+    monkeypatch.setattr(database, "supabase", _RpcSupabase())
+
+    reservation = database.reserve_starter_trial(101)
+
+    assert reservation == {"status": "pending", "idempotency_key": "starter-trial:101"}
+
+
+def test_database_reads_and_syncs_trial_history(monkeypatch, fake_supabase):
+    monkeypatch.setattr(database, "supabase", fake_supabase)
+    fake_supabase.seed("subscription_trials", [{"user_id": 101, "status": "trial_active"}])
+    rpc_calls = []
+
+    class _RpcCall:
+        data = []
+
+        def execute(self):
+            return self
+
+    def fake_rpc(name, params):
+        rpc_calls.append((name, params))
+        return _RpcCall()
+
+    fake_supabase.rpc = fake_rpc
+
+    assert database.get_starter_trial(101)["status"] == "trial_active"
+    assert database.sync_starter_trial(
+        user_id=101,
+        status="trial_used",
+        checkout_session_id="cs_101",
+        subscription_id="sub_101",
+        trial_started_at="2026-09-01T00:00:00+00:00",
+        trial_ends_at="2026-10-01T00:00:00+00:00",
+        event_created_at="2026-09-01T00:00:00+00:00",
+    ) is True
+    assert rpc_calls[0][0] == "sync_starter_trial"
+    assert rpc_calls[0][1]["p_status"] == "trial_used"
+
+
+def test_database_trial_helpers_fail_closed(monkeypatch):
+    monkeypatch.setattr(database, "supabase", object())
+
+    assert database.reserve_starter_trial(101) is None
+    assert database.get_starter_trial(101) is None
+    assert database.sync_starter_trial(101, "trial_used", None, None, None, None, None) is False
+
+
 def test_database_register_and_mark_stripe_webhook_event(monkeypatch, fake_supabase):
     monkeypatch.setattr(database, "supabase", fake_supabase)
 
@@ -125,6 +199,7 @@ def test_database_register_and_mark_stripe_webhook_event(monkeypatch, fake_supab
 
 def test_database_feed_status_and_exists(monkeypatch, fake_supabase):
     monkeypatch.setattr(database, "supabase", fake_supabase)
+    _seed_subscribed_user(fake_supabase)
     feed_id = database.add_feed(101, "https://rss.local/feed")
 
     assert database.feed_exists(101, "https://rss.local/feed") is True
@@ -152,6 +227,7 @@ def test_database_add_feed_respects_subscription_limits(monkeypatch, fake_supaba
 
 def test_database_get_active_feeds_and_delete(monkeypatch, fake_supabase):
     monkeypatch.setattr(database, "supabase", fake_supabase)
+    _seed_subscribed_user(fake_supabase)
     feed_a = database.add_feed(101, "https://rss.local/a")
     feed_b = database.add_feed(101, "https://rss.local/b")
     database.disable_feed(101, feed_b)
@@ -165,6 +241,7 @@ def test_database_get_active_feeds_and_delete(monkeypatch, fake_supabase):
 
 def test_database_update_feed_last_check(monkeypatch, fake_supabase):
     monkeypatch.setattr(database, "supabase", fake_supabase)
+    _seed_subscribed_user(fake_supabase)
     feed_id = database.add_feed(101, "https://rss.local/check")
 
     database.update_feed_last_check(feed_id)

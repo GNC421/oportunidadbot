@@ -50,7 +50,7 @@ def add_user(user_id: int, username: str) -> bool:
             supabase.table('users').update({
                 'username': username,
                 'plan': current.get('plan', 'starter'),
-                'subscription_status': current.get('subscription_status', 'active'),
+                'subscription_status': current.get('subscription_status', 'inactive'),
                 'stripe_customer_id': current.get('stripe_customer_id'),
                 'stripe_subscription_id': current.get('stripe_subscription_id'),
                 'current_period_end': current.get('current_period_end'),
@@ -65,7 +65,7 @@ def add_user(user_id: int, username: str) -> bool:
                 'username': username,
                 'is_active': True,
                 'plan': 'starter',
-                'subscription_status': 'active',
+                'subscription_status': 'inactive',
                 'stripe_customer_id': None,
                 'stripe_subscription_id': None,
                 'current_period_end': None,
@@ -96,6 +96,55 @@ def get_user_by_stripe_customer_id(stripe_customer_id: str) -> Optional[Dict]:
     except Exception as e:
         logger.error(f"Error al obtener usuario por stripe_customer_id {stripe_customer_id}: {e}")
         return None
+
+
+def reserve_starter_trial(user_id: int) -> Optional[Dict[str, Any]]:
+    """Reserva atómicamente el único trial Starter de un usuario."""
+    try:
+        result = supabase.rpc("reserve_starter_trial", {"p_user_id": user_id}).execute()
+        return result.data[0] if result.data else None
+    except Exception as e:
+        logger.error(f"Error al reservar trial Starter para usuario {user_id}: {e}")
+        return None
+
+
+def get_starter_trial(user_id: int) -> Optional[Dict[str, Any]]:
+    """Obtiene el estado persistente del trial Starter."""
+    try:
+        result = supabase.table("subscription_trials").select("*").eq("user_id", user_id).execute()
+        return result.data[0] if result.data else None
+    except Exception as e:
+        logger.error(f"Error al obtener trial Starter del usuario {user_id}: {e}")
+        return None
+
+
+def sync_starter_trial(
+    user_id: int,
+    status: str,
+    checkout_session_id: Optional[str],
+    subscription_id: Optional[str],
+    trial_started_at: Optional[str],
+    trial_ends_at: Optional[str],
+    event_created_at: Optional[str],
+) -> bool:
+    """Sincroniza estado y fechas del trial desde un webhook Stripe verificado."""
+    try:
+        supabase.rpc(
+            "sync_starter_trial",
+            {
+                "p_user_id": user_id,
+                "p_status": status,
+                "p_checkout_session_id": checkout_session_id,
+                "p_subscription_id": subscription_id,
+                "p_trial_started_at": trial_started_at,
+                "p_trial_ends_at": trial_ends_at,
+                "p_event_created_at": event_created_at,
+            },
+        ).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Error sincronizando trial Starter del usuario {user_id}: {e}")
+        return False
 
 
 def update_user_subscription(

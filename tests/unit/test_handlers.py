@@ -137,9 +137,10 @@ async def test_handlers_removegroup_validation(fake_update_context):
 
 
 @pytest.mark.asyncio
-async def test_handlers_start_and_help(fake_update_context):
+async def test_handlers_start_and_help(fake_update_context, monkeypatch):
     handlers = _load_handlers_module()
     update, context, replies = fake_update_context()
+    monkeypatch.setattr(handlers.database, "add_user", lambda *_args: True)
 
     await handlers.start_command(update, context)
     await handlers.help_command(update, context)
@@ -157,6 +158,7 @@ async def test_handlers_start_and_help(fake_update_context):
 async def test_handlers_menu_subscription_shows_current_subscription(fake_update_context, monkeypatch):
     handlers = _load_handlers_module()
     update, context, replies = fake_update_context()
+    monkeypatch.setattr(handlers.database, "add_user", lambda *_args: True)
 
     fake_plan = SimpleNamespace(
         name="Professional",
@@ -190,6 +192,70 @@ async def test_handlers_menu_subscription_shows_current_subscription(fake_update
     assert "Límite de fuentes: 15" in message
 
 
+def test_subscription_summary_does_not_label_inactive_user_as_starter(monkeypatch):
+    handlers = _load_handlers_module()
+    fake_plan = SimpleNamespace(
+        name="Starter",
+        price=handlers.Decimal("9.90"),
+        currency="EUR",
+        source_limit=3,
+    )
+    monkeypatch.setattr(
+        handlers,
+        "get_subscription_service",
+        lambda: SimpleNamespace(
+            get_current_subscription=lambda _user_id: SimpleNamespace(
+                status=SimpleNamespace(value="inactive"),
+                current_period_end=None,
+                plan_definition=fake_plan,
+            )
+        ),
+    )
+    monkeypatch.setattr(handlers.database, "user_feed_count", lambda _user_id: 0)
+
+    summary = handlers._build_subscription_summary_text(101)
+
+    assert "Plan actual: Sin suscripción" in summary
+    assert "Precio mensual: No contratado" in summary
+
+
+def test_subscription_markup_only_shows_trial_when_available(monkeypatch):
+    handlers = _load_handlers_module()
+    monkeypatch.setattr(handlers.database, "get_starter_trial", lambda _user_id: None)
+    monkeypatch.setattr(
+        handlers,
+        "get_subscription_service",
+        lambda: SimpleNamespace(
+            get_current_subscription=lambda _user_id: SimpleNamespace(status=SimpleNamespace(value="inactive"))
+        ),
+    )
+
+    available = handlers._build_subscription_markup(101)
+    available_callbacks = [button.callback_data for row in available.inline_keyboard for button in row]
+    assert handlers.SUB_STARTER_TRIAL in available_callbacks
+
+    monkeypatch.setattr(handlers.database, "get_starter_trial", lambda _user_id: {"status": "trial_used"})
+    used = handlers._build_subscription_markup(101)
+    used_callbacks = [button.callback_data for row in used.inline_keyboard for button in row]
+    assert handlers.SUB_STARTER_TRIAL not in used_callbacks
+
+    monkeypatch.setattr(handlers.database, "get_starter_trial", lambda _user_id: {"status": "pending"})
+    pending = handlers._build_subscription_markup(101)
+    pending_callbacks = [button.callback_data for row in pending.inline_keyboard for button in row]
+    assert handlers.SUB_STARTER_TRIAL in pending_callbacks
+
+    monkeypatch.setattr(
+        handlers,
+        "get_subscription_service",
+        lambda: SimpleNamespace(
+            get_current_subscription=lambda _user_id: SimpleNamespace(status=SimpleNamespace(value="active"))
+        ),
+    )
+    active = handlers._build_subscription_markup(101)
+    active_callbacks = [button.callback_data for row in active.inline_keyboard for button in row]
+    assert handlers.SUB_STARTER_TRIAL not in active_callbacks
+
+
 @pytest.mark.asyncio
 async def test_handlers_subscription_checkout_creates_link(monkeypatch):
     handlers = _load_handlers_module()
@@ -213,6 +279,34 @@ async def test_handlers_subscription_checkout_creates_link(monkeypatch):
     assert "Checkout preparado" in replies[-1]["text"]
     button = replies[-1]["kwargs"]["reply_markup"].inline_keyboard[0][0]
     assert button.url == "https://checkout.stripe.test"
+
+
+@pytest.mark.asyncio
+async def test_handlers_starter_trial_checkout_explains_terms(monkeypatch):
+    handlers = _load_handlers_module()
+    update, context, replies, _edits = _build_callback_update(handlers.SUB_STARTER_TRIAL)
+    monkeypatch.setattr(handlers.database, "add_user", lambda *_args: True)
+
+    class _FakeSubscriptionService:
+        def get_current_subscription(self, _user_id: int):
+            return SimpleNamespace(stripe_customer_id=None)
+
+    class _FakeStripeService:
+        def create_checkout_session(self, **kwargs):
+            assert kwargs["plan"] == handlers.Plan.STARTER
+            assert kwargs["starter_trial"] is True
+            return SimpleNamespace(id="cs_trial", url="https://checkout.stripe.test/trial")
+
+    monkeypatch.setattr(handlers, "get_subscription_service", lambda: _FakeSubscriptionService())
+    monkeypatch.setattr(handlers, "get_stripe_service", lambda: _FakeStripeService())
+
+    await handlers.handle_starter_trial_checkout(update, context)
+
+    assert "30 días" in replies[-1]["text"]
+    assert "Requiere tarjeta" in replies[-1]["text"]
+    assert "cobrará el precio Starter" in replies[-1]["text"]
+    button = replies[-1]["kwargs"]["reply_markup"].inline_keyboard[0][0]
+    assert button.url == "https://checkout.stripe.test/trial"
 
 
 @pytest.mark.asyncio

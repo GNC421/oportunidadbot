@@ -1,6 +1,7 @@
 from typing import Any, Dict, Optional
 from datetime import datetime, timezone
 from decimal import Decimal
+from math import ceil
 from urllib.parse import urlparse
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -16,7 +17,7 @@ from telegram.ext import (
 from loguru import logger
 
 from app import database
-from app.services.stripe_service import StripeIntegrationError, get_stripe_service
+from app.services.stripe_service import StarterTrialUnavailableError, StripeIntegrationError, get_stripe_service
 from app.services.subscription_service import get_subscription_service
 from app.subscriptions.entities import Plan
 from app.subscriptions import get_subscription_catalog
@@ -35,6 +36,7 @@ SUB_CONTRACT = "sub_contract"
 SUB_CHANGE = "sub_change"
 SUB_CANCEL_RENEWAL = "sub_cancel_renewal"
 SUB_OPEN_PORTAL = "sub_open_portal"
+SUB_STARTER_TRIAL = "sub_starter_trial"
 
 WAITING_URL = 1
 
@@ -54,6 +56,7 @@ def _log_command_entry(command_name: str, update: Update, args: Optional[list[st
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Maneja el comando /start."""
     _log_command_entry("start_command", update, context.args)
+    _ensure_user_registered(update)
     await update.message.reply_text(
         _get_main_menu_text(),
         reply_markup=_build_main_menu_markup(),
@@ -151,6 +154,7 @@ def _get_subscription_plans_text() -> str:
 def _format_subscription_status(raw_status: str) -> str:
     """Traduce estados técnicos de suscripción a etiquetas legibles para Telegram."""
     labels = {
+        "inactive": "Sin suscripción",
         "active": "Activa",
         "trialing": "En prueba",
         "past_due": "Pago pendiente",
@@ -170,9 +174,15 @@ def _format_renewal_date(value: Optional[datetime]) -> str:
     return value.astimezone(timezone.utc).strftime("%d/%m/%Y")
 
 
-def _build_subscription_markup() -> InlineKeyboardMarkup:
+def _build_subscription_markup(user_id: int) -> InlineKeyboardMarkup:
     """Construye el teclado de acciones para gestión de suscripción."""
-    return InlineKeyboardMarkup(
+    rows = []
+    trial = database.get_starter_trial(user_id)
+    subscription = get_subscription_service().get_current_subscription(user_id)
+    has_existing_subscription = subscription.status.value in {"active", "trialing", "past_due", "incomplete", "unpaid"}
+    if not has_existing_subscription and (trial is None or trial.get("status") == "pending"):
+        rows.append([InlineKeyboardButton("Probar Starter gratis durante 30 días", callback_data=SUB_STARTER_TRIAL)])
+    rows.extend(
         [
             [InlineKeyboardButton("🛒 Contratar plan", callback_data=SUB_CONTRACT)],
             [InlineKeyboardButton("🔁 Cambiar plan", callback_data=SUB_CHANGE)],
@@ -180,6 +190,7 @@ def _build_subscription_markup() -> InlineKeyboardMarkup:
             [InlineKeyboardButton("🌐 Abrir Stripe Portal", callback_data=SUB_OPEN_PORTAL)],
         ]
     )
+    return InlineKeyboardMarkup(rows)
 
 
 def _build_subscription_checkout_markup() -> InlineKeyboardMarkup:
@@ -199,22 +210,44 @@ def _build_subscription_summary_text(user_id: int) -> str:
     used_sources = database.user_feed_count(user_id)
     source_limit = subscription.plan_definition.source_limit
     limit_text = "Ilimitadas" if source_limit is None else str(source_limit)
+    is_inactive = subscription.status.value == "inactive"
+    plan_name = "Sin suscripción" if is_inactive else subscription.plan_definition.name
+    price = "No contratado" if is_inactive else f"{_format_plan_price(subscription.plan_definition.price)} {subscription.plan_definition.currency}/mes"
 
-    return (
+    summary = (
         "💳 **Mi suscripción**\n\n"
-        f"Plan actual: {subscription.plan_definition.name}\n"
-        f"Precio mensual: {_format_plan_price(subscription.plan_definition.price)} {subscription.plan_definition.currency}/mes\n"
+        f"Plan actual: {plan_name}\n"
+        f"Precio mensual: {price}\n"
         f"Estado: {_format_subscription_status(subscription.status.value)}\n"
         f"Renovación: {_format_renewal_date(subscription.current_period_end)}\n"
         f"Fuentes utilizadas: {used_sources}\n"
         f"Límite de fuentes: {limit_text}"
     )
+    if subscription.status.value == "trialing":
+        trial = database.get_starter_trial(user_id) or {}
+        trial_end = _parse_iso_datetime(trial.get("trial_ends_at")) or subscription.current_period_end
+        days_remaining = max(0, ceil((trial_end - datetime.now(timezone.utc)).total_seconds() / 86400)) if trial_end else 0
+        return (
+            f"{summary}\n\n"
+            "**Prueba gratuita Starter activa**\n"
+            f"Quedan {days_remaining} días\n"
+            f"Próximo cobro: {_format_renewal_date(trial_end)}\n"
+            f"Importe al finalizar: {_format_plan_price(subscription.plan_definition.price)} {subscription.plan_definition.currency}/mes\n"
+            "Puedes cancelar cuando quieras antes de esa fecha desde Stripe Portal."
+        )
+    return summary
 
 
 def _get_user_id(update: Update) -> Optional[int]:
     """Obtiene el ID del usuario desde la actualización."""
     user = update.effective_user
     return user.id if user else None
+
+
+def _ensure_user_registered(update: Update) -> None:
+    user = update.effective_user
+    if user:
+        database.add_user(user.id, user.username or "")
 
 
 def _normalize_feed_url(raw_url: str) -> str:
@@ -716,9 +749,10 @@ async def subscription_command(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text("No pude identificar tu usuario. Inténtalo de nuevo.")
         return
 
+    _ensure_user_registered(update)
     try:
         summary = _build_subscription_summary_text(user_id)
-        await update.message.reply_text(summary, parse_mode="Markdown", reply_markup=_build_subscription_markup())
+        await update.message.reply_text(summary, parse_mode="Markdown", reply_markup=_build_subscription_markup(user_id))
     except Exception:
         logger.exception("Error al cargar panel de suscripción", user_id=user_id)
         await update.message.reply_text("No se pudo cargar tu suscripción en este momento.")
@@ -735,9 +769,10 @@ async def handle_menu_subscription(update: Update, context: ContextTypes.DEFAULT
         await query.message.reply_text("No pude identificar tu usuario. Inténtalo de nuevo.")
         return
 
+    _ensure_user_registered(update)
     try:
         summary = _build_subscription_summary_text(user_id)
-        await query.message.reply_text(summary, parse_mode="Markdown", reply_markup=_build_subscription_markup())
+        await query.message.reply_text(summary, parse_mode="Markdown", reply_markup=_build_subscription_markup(user_id))
     except Exception:
         logger.exception("Error al mostrar menú de suscripción", user_id=user_id)
         await query.message.reply_text("No se pudo cargar tu suscripción en este momento.")
@@ -808,6 +843,44 @@ async def handle_subscription_checkout(update: Update, context: ContextTypes.DEF
     except Exception:
         logger.exception("Error creando checkout de suscripción", user_id=user_id, selected_plan=selected_plan)
         await query.message.reply_text("No se pudo crear la sesión de checkout en este momento.")
+
+
+async def handle_starter_trial_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Abre Checkout para el único trial Starter del usuario autenticado en Telegram."""
+    _log_command_entry("handle_starter_trial_checkout", update)
+    query = update.callback_query
+    await query.answer()
+
+    user_id = _get_user_id(update)
+    if not user_id:
+        await query.message.reply_text("No pude identificar tu usuario. Inténtalo de nuevo.")
+        return
+
+    _ensure_user_registered(update)
+    try:
+        subscription = get_subscription_service().get_current_subscription(user_id)
+        session = get_stripe_service().create_checkout_session(
+            user_id=user_id,
+            plan=Plan.STARTER,
+            customer_id=subscription.stripe_customer_id,
+            starter_trial=True,
+        )
+        markup = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("Activar prueba segura en Stripe", url=session.url)]]
+        )
+        await query.message.reply_text(
+            "Prueba Starter gratis durante 30 días. Requiere tarjeta. No se realizará ningún cargo "
+            "durante la prueba; al finalizar se cobrará el precio Starter si no cancelas antes. "
+            "Puedes cancelar cuando quieras.",
+            reply_markup=markup,
+        )
+    except StarterTrialUnavailableError:
+        await query.message.reply_text("Ya has utilizado o tienes activa tu prueba Starter. Puedes contratar Starter normalmente.")
+    except StripeIntegrationError as exc:
+        await query.message.reply_text(f"No pude iniciar la prueba gratuita: {exc}")
+    except Exception:
+        logger.exception("Error creando checkout de trial Starter", user_id=user_id)
+        await query.message.reply_text("No se pudo iniciar la prueba gratuita en este momento.")
 
 
 async def _send_customer_portal_link(update: Update, intro_text: str) -> None:
@@ -1053,6 +1126,7 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CallbackQueryHandler(handle_subscription_change, pattern=f"^{SUB_CHANGE}$"))
     application.add_handler(CallbackQueryHandler(handle_subscription_cancel_renewal, pattern=f"^{SUB_CANCEL_RENEWAL}$"))
     application.add_handler(CallbackQueryHandler(handle_subscription_open_portal, pattern=f"^{SUB_OPEN_PORTAL}$"))
+    application.add_handler(CallbackQueryHandler(handle_starter_trial_checkout, pattern=f"^{SUB_STARTER_TRIAL}$"))
     application.add_handler(CallbackQueryHandler(handle_subscription_checkout, pattern=r"^sub_checkout_([a-z_]+)$"))
     application.add_handler(CallbackQueryHandler(handle_feed_pause_callback, pattern=r"^feed_pause_(\d+)$"))
     application.add_handler(CallbackQueryHandler(handle_feed_resume_callback, pattern=r"^feed_resume_(\d+)$"))

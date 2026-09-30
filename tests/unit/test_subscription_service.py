@@ -63,6 +63,7 @@ def test_can_add_source_unlimited_plan() -> None:
         {
             "plan": "enterprise",
             "subscription_status": "active",
+            "stripe_subscription_id": "sub_enterprise",
         },
         feed_count=200,
     )
@@ -83,11 +84,26 @@ def test_can_add_source_denied_by_status() -> None:
     assert service.can_add_source(101) is False
 
 
+def test_trialing_starter_has_starter_access() -> None:
+    service = _build_service(
+        {
+            "plan": "starter",
+            "subscription_status": "trialing",
+            "stripe_subscription_id": "sub_trial",
+        },
+        feed_count=2,
+    )
+
+    assert service.can_add_source(101) is True
+    assert service.get_remaining_sources(101) == 1
+
+
 def test_can_use_feature_checks_catalog_features_case_insensitive() -> None:
     service = _build_service(
         {
             "plan": "starter",
             "subscription_status": "active",
+            "stripe_subscription_id": "sub_starter",
         },
         feed_count=0,
     )
@@ -109,4 +125,24 @@ def test_invalid_plan_and_status_fallback_to_defaults() -> None:
     subscription = service.get_current_subscription(101)
 
     assert subscription.plan == Plan.STARTER
-    assert subscription.status == SubscriptionStatus.ACTIVE
+    assert subscription.status == SubscriptionStatus.INACTIVE
+
+
+def test_new_or_missing_user_has_no_starter_entitlement() -> None:
+    service = _build_service({}, feed_count=0)
+
+    subscription = service.get_current_subscription(101)
+
+    assert subscription.status == SubscriptionStatus.INACTIVE
+    assert service.can_add_source(101) is False
+    assert service.can_use_feature(101, "Alertas por Telegram") is False
+
+
+def test_active_status_without_stripe_subscription_does_not_grant_starter() -> None:
+    service = _build_service(
+        {"plan": "starter", "subscription_status": "active"},
+        feed_count=0,
+    )
+
+    assert service.can_add_source(101) is False
+    assert service.can_use_feature(101, "Alertas por Telegram") is False

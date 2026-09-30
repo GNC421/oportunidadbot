@@ -85,6 +85,56 @@ def test_create_checkout_session_uses_price_from_settings(monkeypatch):
     assert fake.last_checkout_kwargs["metadata"]["plan"] == "professional"
 
 
+def test_create_starter_trial_checkout_uses_starter_price_and_idempotency(monkeypatch):
+    service, fake = _build_service(monkeypatch)
+    monkeypatch.setattr(stripe_service_module.database, "get_user", lambda _user_id: {"subscription_status": "inactive"})
+    monkeypatch.setattr(
+        stripe_service_module.database,
+        "reserve_starter_trial",
+        lambda _user_id: {"status": "pending", "idempotency_key": "starter-trial:101"},
+    )
+
+    service.create_checkout_session(user_id=101, plan=Plan.STARTER, starter_trial=True)
+
+    assert fake.last_checkout_kwargs["line_items"][0]["price"] == "price_starter"
+    assert fake.last_checkout_kwargs["payment_method_collection"] == "always"
+    assert fake.last_checkout_kwargs["subscription_data"]["trial_period_days"] == 30
+    assert fake.last_checkout_kwargs["subscription_data"]["metadata"]["starter_trial"] == "true"
+    assert fake.last_checkout_kwargs["idempotency_key"] == "starter-trial:101"
+
+
+def test_create_starter_trial_rejects_used_trial(monkeypatch):
+    import pytest
+
+    service, fake = _build_service(monkeypatch)
+    monkeypatch.setattr(stripe_service_module.database, "get_user", lambda _user_id: {"subscription_status": "inactive"})
+    monkeypatch.setattr(
+        stripe_service_module.database,
+        "reserve_starter_trial",
+        lambda _user_id: {"status": "trial_used", "idempotency_key": "starter-trial:101"},
+    )
+
+    with pytest.raises(stripe_service_module.StarterTrialUnavailableError):
+        service.create_checkout_session(user_id=101, plan=Plan.STARTER, starter_trial=True)
+
+    assert fake.last_checkout_kwargs is None
+
+
+def test_create_starter_trial_rejects_existing_subscription(monkeypatch):
+    import pytest
+
+    service, _ = _build_service(monkeypatch)
+    monkeypatch.setattr(stripe_service_module.database, "get_user", lambda _user_id: {"subscription_status": "active"})
+    monkeypatch.setattr(
+        stripe_service_module.database,
+        "reserve_starter_trial",
+        lambda _user_id: (_ for _ in ()).throw(AssertionError("should reject before reserving")),
+    )
+
+    with pytest.raises(stripe_service_module.StarterTrialUnavailableError):
+        service.create_checkout_session(user_id=101, plan=Plan.STARTER, starter_trial=True)
+
+
 def test_create_customer_portal_session(monkeypatch):
     service, fake = _build_service(monkeypatch)
 
@@ -145,6 +195,43 @@ def test_process_webhook_duplicate_event_is_idempotent(monkeypatch):
 
     ok = service.process_webhook_event({"id": "evt_dup", "type": "checkout.session.completed", "data": {"object": {}}})
     assert ok is True
+
+
+def test_trialing_subscription_webhook_syncs_trial_dates(monkeypatch):
+    service, _ = _build_service(monkeypatch)
+    syncs = []
+    monkeypatch.setattr(stripe_service_module.database, "register_stripe_webhook_event", lambda *_a, **_k: True)
+    monkeypatch.setattr(stripe_service_module.database, "mark_stripe_webhook_event_status", lambda *_a, **_k: True)
+    monkeypatch.setattr(stripe_service_module.database, "get_user_by_stripe_customer_id", lambda _cid: {"id": 101})
+    monkeypatch.setattr(stripe_service_module.database, "update_user_subscription", lambda **_kwargs: True)
+    monkeypatch.setattr(
+        stripe_service_module.database,
+        "sync_starter_trial",
+        lambda **kwargs: syncs.append(kwargs) or True,
+    )
+
+    event = {
+        "id": "evt_trialing",
+        "type": "customer.subscription.updated",
+        "created": 1782864000,
+        "data": {
+            "object": {
+                "id": "sub_trial",
+                "customer": "cus_123",
+                "status": "trialing",
+                "trial_start": 1782864000,
+                "trial_end": 1785456000,
+                "current_period_end": 1785456000,
+                "metadata": {"starter_trial": "true", "user_id": "101"},
+                "items": {"data": [{"price": {"id": "price_starter"}}]},
+            }
+        },
+    }
+
+    assert service.process_webhook_event(event) is True
+    assert syncs[0]["status"] == "trial_active"
+    assert syncs[0]["subscription_id"] == "sub_trial"
+    assert syncs[0]["trial_ends_at"] is not None
 
 
 def test_process_invoice_payment_failed_updates_status(monkeypatch):
