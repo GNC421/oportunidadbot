@@ -126,8 +126,10 @@ except Exception:
     logger.debug("Debug router not available")
 
 from app.web.routes import router as web_router
+from app.web.enterprise_routes import router as enterprise_router
 
 app.include_router(web_router)
+app.include_router(enterprise_router)
 
 # --- Endpoints ---
 
@@ -280,6 +282,31 @@ def clear_ai_cache():
     except Exception:
         logger.exception("Error clearing AI classifier cache")
         raise HTTPException(status_code=500, detail="Error clearing cache")
+
+
+class CreateEnterpriseOrganizationRequest(BaseModel):
+    owner_user_id: int
+    name: str
+    seats_purchased: int = 1
+
+
+@app.post("/admin/enterprise/organizations", dependencies=[Depends(_require_admin)])
+def create_enterprise_organization(payload: CreateEnterpriseOrganizationRequest):
+    """Provisiona una organización Enterprise (asientos gestionados manualmente hasta integrar Stripe seats)."""
+    from app import database
+
+    owner = database.get_user(payload.owner_user_id)
+    if not owner:
+        raise HTTPException(status_code=404, detail="El usuario propietario no existe")
+
+    organization = database.create_enterprise_organization(
+        owner_user_id=payload.owner_user_id,
+        name=payload.name,
+        seats_purchased=payload.seats_purchased,
+    )
+    if not organization:
+        raise HTTPException(status_code=409, detail="No se pudo crear la organización (¿ya existe una para este propietario?)")
+    return organization
 
 # Opcional: endpoint para pruebas
 @app.get("/ping")

@@ -174,7 +174,7 @@ async def telegram_login_callback(code: str, state: str, request: Request) -> Re
     user = database.get_user(user_id)
     if not user or not user.get("is_active", True):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User is not registered")
-    if not get_subscription_service().can_access_web_app(user_id):
+    if not get_subscription_service().can_access_web_app(user_id) and not database.get_pending_invitation_for_username(user.get("username")):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Professional plan or higher required")
 
     response = RedirectResponse(web_app_origin, status_code=status.HTTP_302_FOUND)
@@ -201,7 +201,7 @@ async def telegram_widget_login(request: Request) -> Response:
     user = database.get_user(telegram_id)
     if not user or not user.get("is_active", True):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User is not registered")
-    if not get_subscription_service().can_access_web_app(telegram_id):
+    if not get_subscription_service().can_access_web_app(telegram_id) and not database.get_pending_invitation_for_username(user.get("username")):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Professional plan or higher required")
 
     response = Response(status_code=status.HTTP_200_OK)

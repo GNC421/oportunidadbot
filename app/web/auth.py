@@ -188,6 +188,19 @@ def require_pro_web_user(request: Request) -> dict[str, Any]:
     return user
 
 
+def require_authenticated_user(request: Request) -> dict[str, Any]:
+    """Valida únicamente la sesión Telegram, sin exigir un plan con acceso a la webapp.
+
+    Se usa para el flujo de aceptar una invitación Enterprise: en ese momento el
+    usuario todavía no tiene acceso a la app privada (lo obtiene al aceptar).
+    """
+    user_id = get_session_user_id(request.cookies.get(SESSION_COOKIE_NAME))
+    user = get_user(user_id)
+    if not user or not user.get("is_active", True):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+    return user
+
+
 def verify_telegram_widget_data(data: dict[str, Any]) -> int:
     """Verify Telegram Login Widget data (legacy) and return telegram user id.
 
