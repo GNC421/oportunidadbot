@@ -14,7 +14,11 @@ class BaseSource(ABC):
 
     DEFAULT_HTTP_TIMEOUT_SECONDS = 15.0
     DEFAULT_HTTP_MAX_RETRIES = 2
-    DEFAULT_HTTP_USER_AGENT = "Mozilla/5.0 (compatible; OportunidadBot/1.0)"
+    DEFAULT_HTTP_USER_AGENT = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/138.0.0.0 Safari/537.36"
+    )
 
     def __init__(self, url: str) -> None:
         self.url = url

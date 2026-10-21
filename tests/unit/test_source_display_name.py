@@ -37,3 +37,9 @@ def test_tablon_no_demanda_without_params_without_trailing_slash():
     url = "https://www.tablondeanuncios.com/pisos-en-alquiler-en-malaga"
 
     assert SourceDisplayNameService.from_url(url) == "🏠 Pisos en alquiler · Málaga"
+
+
+def test_milanuncios_use_path_and_query_for_display_name():
+    url = "https://www.milanuncios.com/venta-de-casas-en-murcia/?demanda=s&vendedor=part"
+
+    assert SourceDisplayNameService.from_url(url) == "🏠 Demanda Venta de casas · Murcia"
