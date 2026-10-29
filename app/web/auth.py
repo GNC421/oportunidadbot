@@ -11,6 +11,7 @@ from typing import Any
 import httpx
 import jwt
 from fastapi import HTTPException, Request, status
+from loguru import logger
 
 from app.config import settings
 from app.database import get_user
@@ -148,7 +149,12 @@ def verify_telegram_id_token(id_token: str, nonce: str) -> int:
         if telegram_id <= 0:
             raise ValueError("invalid user id")
         return telegram_id
-    except (jwt.PyJWTError, KeyError, TypeError, ValueError):
+    except (jwt.PyJWTError, KeyError, TypeError, ValueError) as exc:
+        logger.warning(
+            "Telegram id_token verification failed: {}: {}",
+            type(exc).__name__,
+            exc,
+        )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Telegram identity token")
 
 
