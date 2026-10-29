@@ -120,7 +120,6 @@ webapp/node_modules/
 
 # Railway
 railway-deployment-*.json
-.railway/
 
 # Docker
 *.dockerignore

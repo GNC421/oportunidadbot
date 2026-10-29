@@ -92,12 +92,18 @@ class FakeSupabase:
             "feeds": [],
             "alerts": [],
             "stripe_webhook_events": [],
+            "enterprise_organizations": [],
+            "enterprise_members": [],
+            "enterprise_invitations": [],
         }
         self._ids: dict[str, int] = {
             "users": 1,
             "feeds": 1,
             "alerts": 1,
             "stripe_webhook_events": 1,
+            "enterprise_organizations": 1,
+            "enterprise_members": 1,
+            "enterprise_invitations": 1,
         }
 
     @property
@@ -115,6 +121,18 @@ class FakeSupabase:
     @property
     def stripe_webhook_events(self) -> list[dict[str, Any]]:
         return self._storage["stripe_webhook_events"]
+
+    @property
+    def enterprise_organizations(self) -> list[dict[str, Any]]:
+        return self._storage["enterprise_organizations"]
+
+    @property
+    def enterprise_members(self) -> list[dict[str, Any]]:
+        return self._storage["enterprise_members"]
+
+    @property
+    def enterprise_invitations(self) -> list[dict[str, Any]]:
+        return self._storage["enterprise_invitations"]
 
     def seed(self, table_name: str, rows: list[dict[str, Any]]) -> None:
         self._storage[table_name] = [deepcopy(row) for row in rows]

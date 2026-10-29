@@ -1,0 +1,1 @@
+"""HTTP contracts for the private OportunidadBot web application."""

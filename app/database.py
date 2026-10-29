@@ -310,6 +310,17 @@ def get_alert_by_url(post_url: str) -> Optional[Dict]:
         logger.error(f"Error al obtener alerta: {e}")
         return None
 
+
+def get_user_alerts(user_id: int, limit: int = 50) -> List[Dict[str, Any]]:
+    """Obtiene alertas de un usuario sin exponer registros de otros usuarios."""
+    try:
+        safe_limit = max(1, min(limit, 100))
+        result = supabase.table('alerts').select('*').eq('user_id', user_id).limit(safe_limit).execute()
+        return result.data if result.data is not None else []
+    except Exception as e:
+        logger.error(f"Error al obtener alertas del usuario {user_id}: {e}")
+        return []
+
 def mark_alert_sent(alert_id: int):
     """Marca una alerta como enviada"""
     trace = get_trace_service()
@@ -322,3 +333,269 @@ def mark_alert_sent(alert_id: int):
     except Exception as e:
         logger.error(f"Error al marcar alerta enviada: {e}")
         _maybe_run_async(trace.error(event_id, error=str(e)))
+
+
+def list_alerts_for_users(user_ids: List[int]) -> List[Dict[str, Any]]:
+    """Obtiene las alertas de un conjunto de usuarios (uso interno Enterprise)."""
+    try:
+        wanted = set(user_ids)
+        if not wanted:
+            return []
+        result = supabase.table('alerts').select('*').execute()
+        rows = result.data if result.data is not None else []
+        return [row for row in rows if row.get('user_id') in wanted]
+    except Exception as e:
+        logger.error(f"Error al obtener alertas para usuarios {user_ids}: {e}")
+        return []
+
+
+def list_feeds_for_users(user_ids: List[int]) -> List[Dict[str, Any]]:
+    """Obtiene los feeds de un conjunto de usuarios (uso interno Enterprise)."""
+    try:
+        wanted = set(user_ids)
+        if not wanted:
+            return []
+        result = supabase.table('feeds').select('*').execute()
+        rows = result.data if result.data is not None else []
+        return [row for row in rows if row.get('user_id') in wanted]
+    except Exception as e:
+        logger.error(f"Error al obtener feeds para usuarios {user_ids}: {e}")
+        return []
+
+
+def list_users_by_ids(user_ids: List[int]) -> List[Dict[str, Any]]:
+    """Obtiene los datos públicos básicos de un conjunto de usuarios."""
+    try:
+        wanted = set(user_ids)
+        if not wanted:
+            return []
+        result = supabase.table('users').select('*').execute()
+        rows = result.data if result.data is not None else []
+        return [row for row in rows if row.get('id') in wanted]
+    except Exception as e:
+        logger.error(f"Error al obtener usuarios {user_ids}: {e}")
+        return []
+
+
+# ============ CRUD Enterprise: organizaciones ============
+
+def create_enterprise_organization(owner_user_id: int, name: str, seats_purchased: int = 1) -> Optional[Dict[str, Any]]:
+    """Crea una organización Enterprise y su membresía OWNER en una única operación."""
+    try:
+        existing = supabase.table('enterprise_organizations').select('*').eq('owner_user_id', owner_user_id).execute()
+        if existing.data:
+            logger.warning(f"El usuario {owner_user_id} ya tiene una organización Enterprise")
+            return None
+
+        result = supabase.table('enterprise_organizations').insert({
+            'owner_user_id': owner_user_id,
+            'name': name,
+            'seats_purchased': seats_purchased,
+            'status': 'active',
+            'created_at': datetime.now().isoformat(),
+            'updated_at': datetime.now().isoformat(),
+        }).execute()
+        organization = result.data[0] if result.data else None
+        if not organization:
+            return None
+
+        membership = create_enterprise_membership(
+            organization_id=organization['id'],
+            user_id=owner_user_id,
+            parent_user_id=None,
+            role='OWNER',
+        )
+        if not membership:
+            logger.error(f"No se pudo crear la membresía OWNER para la organización {organization['id']}")
+            return None
+        return organization
+    except Exception as e:
+        logger.error(f"Error al crear organización Enterprise para {owner_user_id}: {e}")
+        return None
+
+
+def get_enterprise_organization(organization_id: int) -> Optional[Dict[str, Any]]:
+    """Obtiene una organización Enterprise por su ID."""
+    try:
+        result = supabase.table('enterprise_organizations').select('*').eq('id', organization_id).execute()
+        return result.data[0] if result.data else None
+    except Exception as e:
+        logger.error(f"Error al obtener la organización Enterprise {organization_id}: {e}")
+        return None
+
+
+def update_enterprise_organization(organization_id: int, **fields: Any) -> bool:
+    """Actualiza campos de una organización Enterprise."""
+    try:
+        payload = dict(fields)
+        payload['updated_at'] = datetime.now().isoformat()
+        result = supabase.table('enterprise_organizations').update(payload).eq('id', organization_id).execute()
+        return bool(getattr(result, 'data', None) is not None)
+    except Exception as e:
+        logger.error(f"Error al actualizar la organización Enterprise {organization_id}: {e}")
+        return False
+
+
+# ============ CRUD Enterprise: miembros ============
+
+def create_enterprise_membership(
+    organization_id: int,
+    user_id: int,
+    parent_user_id: Optional[int],
+    role: str,
+    status: str = 'active',
+) -> Optional[Dict[str, Any]]:
+    """Crea la fila de pertenencia/jerarquía de un usuario dentro de una organización."""
+    try:
+        result = supabase.table('enterprise_members').insert({
+            'organization_id': organization_id,
+            'user_id': user_id,
+            'parent_user_id': parent_user_id,
+            'role': role,
+            'status': status,
+            'created_at': datetime.now().isoformat(),
+            'updated_at': datetime.now().isoformat(),
+        }).execute()
+        return result.data[0] if result.data else None
+    except Exception as e:
+        logger.error(f"Error al crear membresía Enterprise para usuario {user_id}: {e}")
+        return None
+
+
+def get_enterprise_membership(user_id: int) -> Optional[Dict[str, Any]]:
+    """Obtiene la membresía Enterprise (de cualquier estado) de un usuario."""
+    try:
+        result = supabase.table('enterprise_members').select('*').eq('user_id', user_id).execute()
+        return result.data[0] if result.data else None
+    except Exception as e:
+        logger.error(f"Error al obtener la membresía Enterprise del usuario {user_id}: {e}")
+        return None
+
+
+def list_enterprise_members(organization_id: int) -> List[Dict[str, Any]]:
+    """Obtiene todas las filas de pertenencia (activas e inactivas) de una organización."""
+    try:
+        result = supabase.table('enterprise_members').select('*').eq('organization_id', organization_id).execute()
+        return result.data if result.data is not None else []
+    except Exception as e:
+        logger.error(f"Error al listar miembros de la organización {organization_id}: {e}")
+        return []
+
+
+def update_enterprise_membership(organization_id: int, user_id: int, **fields: Any) -> bool:
+    """Actualiza la fila de pertenencia de un usuario (rol, responsable o estado)."""
+    try:
+        payload = dict(fields)
+        payload['updated_at'] = datetime.now().isoformat()
+        result = (
+            supabase.table('enterprise_members')
+            .update(payload)
+            .eq('organization_id', organization_id)
+            .eq('user_id', user_id)
+            .execute()
+        )
+        return bool(getattr(result, 'data', None) is not None)
+    except Exception as e:
+        logger.error(f"Error al actualizar la membresía Enterprise del usuario {user_id}: {e}")
+        return False
+
+
+# ============ CRUD Enterprise: invitaciones ============
+
+def create_enterprise_invitation(
+    organization_id: int,
+    invited_by_user_id: int,
+    parent_user_id: int,
+    role: str,
+    token: str,
+    expires_at: str,
+    telegram_username: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Crea una invitación pendiente para unirse a una organización Enterprise."""
+    try:
+        result = supabase.table('enterprise_invitations').insert({
+            'organization_id': organization_id,
+            'invited_by_user_id': invited_by_user_id,
+            'parent_user_id': parent_user_id,
+            'telegram_username': telegram_username,
+            'invited_user_id': None,
+            'role': role,
+            'token': token,
+            'status': 'pending',
+            'expires_at': expires_at,
+            'created_at': datetime.now().isoformat(),
+        }).execute()
+        return result.data[0] if result.data else None
+    except Exception as e:
+        logger.error(f"Error al crear invitación Enterprise para la organización {organization_id}: {e}")
+        return None
+
+
+def get_enterprise_invitation_by_token(token: str) -> Optional[Dict[str, Any]]:
+    """Obtiene una invitación Enterprise por su token."""
+    try:
+        result = supabase.table('enterprise_invitations').select('*').eq('token', token).execute()
+        return result.data[0] if result.data else None
+    except Exception as e:
+        logger.error(f"Error al obtener la invitación Enterprise {token}: {e}")
+        return None
+
+
+def list_pending_enterprise_invitations(organization_id: int) -> List[Dict[str, Any]]:
+    """Lista las invitaciones pendientes de una organización."""
+    try:
+        result = (
+            supabase.table('enterprise_invitations')
+            .select('*')
+            .eq('organization_id', organization_id)
+            .eq('status', 'pending')
+            .execute()
+        )
+        return result.data if result.data is not None else []
+    except Exception as e:
+        logger.error(f"Error al listar invitaciones pendientes de la organización {organization_id}: {e}")
+        return []
+
+
+def update_enterprise_invitation(invitation_id: int, **fields: Any) -> bool:
+    """Actualiza el estado/datos de una invitación Enterprise."""
+    try:
+        result = supabase.table('enterprise_invitations').update(fields).eq('id', invitation_id).execute()
+        return bool(getattr(result, 'data', None) is not None)
+    except Exception as e:
+        logger.error(f"Error al actualizar la invitación Enterprise {invitation_id}: {e}")
+        return False
+
+
+def get_pending_invitation_for_username(username: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Busca una invitación Enterprise pendiente y no caducada dirigida a este @usuario de Telegram.
+
+    Permite que un empleado invitado pueda iniciar sesión en la webapp por primera vez
+    aunque su plan personal (Starter) no le daría acceso por sí solo.
+    """
+    if not username:
+        return None
+    try:
+        result = (
+            supabase.table('enterprise_invitations')
+            .select('*')
+            .eq('status', 'pending')
+            .eq('telegram_username', username)
+            .execute()
+        )
+        rows = result.data if result.data is not None else []
+        now = datetime.now()
+        for row in rows:
+            expires_at = row.get('expires_at')
+            if not expires_at:
+                continue
+            try:
+                parsed = datetime.fromisoformat(str(expires_at).replace('Z', '+00:00')).replace(tzinfo=None)
+            except ValueError:
+                continue
+            if parsed >= now:
+                return row
+        return None
+    except Exception as e:
+        logger.error(f"Error al buscar invitación pendiente para @{username}: {e}")
+        return None

@@ -24,10 +24,12 @@ class SubscriptionService:
         catalog: SubscriptionCatalog,
         user_reader: Callable[[int], Optional[dict[str, Any]]],
         feed_count_reader: Callable[[int], int],
+        enterprise_membership_reader: Optional[Callable[[int], Optional[dict[str, Any]]]] = None,
     ) -> None:
         self._catalog = catalog
         self._user_reader = user_reader
         self._feed_count_reader = feed_count_reader
+        self._enterprise_membership_reader = enterprise_membership_reader
 
     def get_current_subscription(self, user_id: int) -> Subscription:
         user = self._user_reader(user_id) or {}
@@ -62,6 +64,21 @@ class SubscriptionService:
 
         subscription = self.get_current_subscription(user_id)
         return any(feature.lower() == normalized_feature for feature in subscription.plan_definition.features)
+
+    def can_access_web_app(self, user_id: int) -> bool:
+        """Indica si la suscripción actual permite acceder a la aplicación web privada."""
+        if self.get_current_subscription(user_id).plan in {
+            Plan.PROFESSIONAL,
+            Plan.ENTERPRISE,
+        }:
+            return True
+        return self._has_active_enterprise_membership(user_id)
+
+    def _has_active_enterprise_membership(self, user_id: int) -> bool:
+        if self._enterprise_membership_reader is None:
+            return False
+        membership = self._enterprise_membership_reader(user_id)
+        return bool(membership and membership.get("status") == "active")
 
     def get_remaining_sources(self, user_id: int) -> Optional[int]:
         subscription = self.get_current_subscription(user_id)
@@ -121,6 +138,7 @@ _subscription_service = SubscriptionService(
     catalog=get_subscription_catalog(),
     user_reader=database.get_user,
     feed_count_reader=database.user_feed_count,
+    enterprise_membership_reader=database.get_enterprise_membership,
 )
 
 
